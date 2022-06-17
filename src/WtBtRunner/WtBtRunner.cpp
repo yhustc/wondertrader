@@ -99,8 +99,5 @@ int main()
 
 	replayer.run();
 
-	printf("press enter key to exit\r\n");
-	getchar();
-
 	WTSLogger::stop();
 }
