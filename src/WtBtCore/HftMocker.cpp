@@ -241,7 +241,16 @@ bool HftMocker::init_hft_factory(WTSVariant* cfg)
 	if(cfgStra)
 	{
 		_strategy = _factory._fact->createStrategy(cfgStra->getCString("name"), "hft");
-		_strategy->init(cfgStra->get("params"));
+		
+		WTSVariant* paramCfg = cfgStra->get("params");
+		_strategy->init(paramCfg);
+
+		const char* code = paramCfg->getCString("code");
+		PosInfo& pInfo = _pos_map[code];
+		pInfo._volume = paramCfg->getDouble("volume");
+		pInfo._closeprofit = 0.0;
+		pInfo._dynprofit = 0.0;
+		pInfo._frozen = 0.0;
 	}
 	return true;
 }
@@ -689,7 +698,7 @@ bool HftMocker::procOrder(uint32_t localid)
 
 	OrderInfoPtr ordInfo = it->second;
 
-	//第一步,如果在撤单概率中,则执行撤单
+	//第一�?,如果在撤单概率中,则执行撤�?
 	if(_error_rate>0 && genRand(10000)<=_error_rate)
 	{
 		on_order(localid, ordInfo->_code, ordInfo->_isBuy, ordInfo->_total, ordInfo->_left, ordInfo->_price, true, ordInfo->_usertag);
@@ -706,7 +715,7 @@ bool HftMocker::procOrder(uint32_t localid)
 		return false;
 
 	double curPx = curTick->price();
-	double orderQty = ordInfo->_isBuy ? curTick->askqty(0) : curTick->bidqty(0);	//看对手盘的数量
+	double orderQty = ordInfo->_isBuy ? curTick->askqty(0) : curTick->bidqty(0);	//看对手盘的数�?
 	if (decimal::eq(orderQty, 0.0))
 		return false;
 
@@ -727,19 +736,19 @@ bool HftMocker::procOrder(uint32_t localid)
 	{
 		if(ordInfo->_isBuy && decimal::gt(curPx, ordInfo->_price))
 		{
-			//买单,但是当前价大于限价,不成交
+			//买单,但是当前价大于限�?,不成�?
 			return false;
 		}
 
 		if (!ordInfo->_isBuy && decimal::lt(curPx, ordInfo->_price))
 		{
-			//卖单,但是当前价小于限价,不成交
+			//卖单,但是当前价小于限�?,不成�?
 			return false;
 		}
 	}
 
 	/*
-	 *	下面就要模拟成交了
+	 *	下面就要模拟成交�?
 	 */
 	double maxQty = min(orderQty, ordInfo->_left);
 	auto vols = splitVolume((uint32_t)maxQty);
@@ -930,8 +939,8 @@ void HftMocker::stra_sub_ticks(const char* stdCode)
 {
 	/*
 	 *	By Wesley @ 2022.03.01
-	 *	主动订阅tick会在本地记一下
-	 *	tick数据回调的时候先检查一下
+	 *	主动订阅tick会在本地记一�?
+	 *	tick数据回调的时候先检查一�?
 	 */
 	_tick_subs.insert(stdCode);
 
@@ -1075,15 +1084,15 @@ void HftMocker::do_set_position(const char* stdCode, double qty, double price /*
 	if (commInfo == NULL)
 		return;
 
-	//成交价
+	//成交�?
 	double trdPx = curPx;
 
 	double diff = qty - pInfo._volume;
 	bool isBuy = decimal::gt(diff, 0.0);
-	if (decimal::gt(pInfo._volume*diff, 0))//当前持仓和仓位变化方向一致, 增加一条明细, 增加数量即可
+	if (decimal::gt(pInfo._volume*diff, 0))//当前持仓和仓位变化方向一�?, 增加一条明�?, 增加数量即可
 	{
 		pInfo._volume = qty;
-		//如果T+1，则冻结仓位要增加
+		//如果T+1，则冻结仓位要增�?
 		if (commInfo->isT1())
 		{
 			//ASSERT(diff>0);
@@ -1106,7 +1115,7 @@ void HftMocker::do_set_position(const char* stdCode, double qty, double price /*
 		log_trade(stdCode, dInfo._long, true, curTm, trdPx, abs(diff), fee, userTag);
 	}
 	else
-	{//持仓方向和仓位变化方向不一致,需要平仓
+	{//持仓方向和仓位变化方向不一�?,需要平�?
 		double left = abs(diff);
 
 		pInfo._volume = qty;
@@ -1133,14 +1142,14 @@ void HftMocker::do_set_position(const char* stdCode, double qty, double price /*
 			if (!dInfo._long)
 				profit *= -1;
 			pInfo._closeprofit += profit;
-			pInfo._dynprofit = pInfo._dynprofit*dInfo._volume / (dInfo._volume + maxQty);//浮盈也要做等比缩放
+			pInfo._dynprofit = pInfo._dynprofit*dInfo._volume / (dInfo._volume + maxQty);//浮盈也要做等比缩�?
 			_fund_info._total_profit += profit;
 
 			double fee = _replayer->calc_fee(stdCode, trdPx, maxQty, dInfo._opentdate == curTDate ? 2 : 1);
 			_fund_info._total_fees += fee;
-			//这里写成交记录
+			//这里写成交记�?
 			log_trade(stdCode, dInfo._long, false, curTm, trdPx, maxQty, fee, userTag);
-			//这里写平仓记录
+			//这里写平仓记�?
 			log_close(stdCode, dInfo._long, dInfo._opentime, dInfo._price, curTm, trdPx, maxQty, profit, maxProf, maxLoss, pInfo._closeprofit, dInfo._usertag, userTag);
 
 			if (left == 0)
@@ -1155,12 +1164,12 @@ void HftMocker::do_set_position(const char* stdCode, double qty, double price /*
 			count--;
 		}
 
-		//最后,如果还有剩余的,则需要反手了
+		//最�?,如果还有剩余�?,则需要反手了
 		if (left > 0)
 		{
 			left = left * qty / abs(qty);
 
-			//如果T+1，则冻结仓位要增加
+			//如果T+1，则冻结仓位要增�?
 			if (commInfo->isT1())
 			{
 				pInfo._frozen += left;
@@ -1176,7 +1185,7 @@ void HftMocker::do_set_position(const char* stdCode, double qty, double price /*
 			strcpy(dInfo._usertag, userTag);
 			pInfo._details.emplace_back(dInfo);
 
-			//这里还需要写一笔成交记录
+			//这里还需要写一笔成交记�?
 			double fee = _replayer->calc_fee(stdCode, trdPx, abs(left), 0);
 			_fund_info._total_fees += fee;
 			log_trade(stdCode, dInfo._long, true, curTm, trdPx, abs(left), fee, userTag);
