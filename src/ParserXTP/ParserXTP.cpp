@@ -96,6 +96,7 @@ bool ParserXTP::init(WTSVariant* config)
 	m_strUser = config->getCString("user");
 	m_strPass = config->getCString("pass");
 	m_iProtocol = (XTP_PROTOCOL_TYPE)config->getUInt32("protocol");
+	m_subtype = (SUB_DATA_TYPE)config->getUInt32("subtype");
 	m_uClientID = config->getUInt32("clientid");
 	m_uHBInterval = config->getUInt32("hbinterval");
 	m_uBuffSize = config->getUInt32("buffsize");
@@ -196,6 +197,179 @@ void ParserXTP::OnDisconnected(int nReason)
 		write_log(m_sink, LL_ERROR, "[ParserXTP] Market data server disconnected: {}...", nReason);
 		m_sink->handleEvent(WPE_Close, 0);
 	}
+}
+
+void ParserXTP::OnSubTickByTick(XTPST *ticker, XTPRI *error_info, bool is_last)
+{
+	if (!IsErrorRspInfo(error_info))
+	{
+
+	}
+	else
+	{
+		if(m_sink)
+			write_log(m_sink, LL_ERROR, "[ParserXTP] Tick data subscribe faile, code: {}.{}", ticker->exchange_id == XTP_EXCHANGE_SH ? "SSE" : "SZSE", ticker->ticker);
+	}
+}
+
+void ParserXTP::OnUnSubTickByTick(XTPST *ticker, XTPRI *error_info, bool is_last)
+{
+
+}
+
+void ParserXTP::OnTickByTick(XTPTBT *tbt_data)
+{
+	if(m_pBaseDataMgr == NULL || tbt_data->type == XTP_TBT_ENTRUST)
+	{
+		return;
+	}
+
+	uint32_t actDate = (uint32_t)(tbt_data->data_time / 1000000000);
+	uint32_t actTime = tbt_data->data_time % 1000000000;
+	uint32_t actHour = actTime / 10000000;
+
+	std::string code, exchg;
+	if (tbt_data->exchange_id == XTP_EXCHANGE_SH)
+	{
+		exchg = "SSE";
+	}
+	else
+	{
+		exchg = "SZSE";
+	}
+	code = tbt_data->ticker;
+
+	WTSContractInfo* ct = m_pBaseDataMgr->getContract(code.c_str(), exchg.c_str());
+	if(ct == NULL)
+	{
+		if (m_sink)
+			write_log(m_sink, LL_ERROR, "[ParserXTP] Instrument {}.{} not exists...", exchg.c_str(), tbt_data->ticker);
+		return;
+	}
+	WTSCommodityInfo* commInfo = ct->getCommInfo();
+
+	WTSTickData* tick = WTSTickData::create(code.c_str());
+	tick->setContractInfo(ct);
+	WTSTickStruct& quote = tick->getTickStruct();
+	strcpy(quote.exchg, commInfo->getExchg());
+	
+	quote.action_date = actDate;
+	quote.action_time = actTime;
+
+	XTPTickByTickTrade& trade = tbt_data->trade;
+	
+	quote.price = checkValid(trade.price);
+	quote.total_volume = (uint32_t)trade.qty;
+	quote.trading_date = m_uTradingDate;
+	quote.total_turnover = checkValid(trade.price) * trade.qty;
+
+	// 以下内容都没有, 所以全部填0
+	quote.open = 0.0;
+	quote.high = 0.0;
+	quote.low = 0.0;
+	quote.upper_limit = 0.0;
+	quote.lower_limit = 0.0;
+	quote.pre_close = 0.0;
+	for (int i = 0; i < 10; i++)
+	{
+		quote.ask_prices[i] = 0.0;
+		quote.ask_qty[i] = 0;
+
+		quote.bid_prices[i] = 0.0;
+		quote.bid_qty[i] = 0;
+	}
+
+	if(m_sink)
+		m_sink->handleQuote(tick, 1);
+
+	tick->release();
+}
+
+
+void ParserXTP::OnSubOrderBook(XTPST *ticker, XTPRI *error_info, bool is_last)
+{
+	if (!IsErrorRspInfo(error_info))
+	{
+
+	}
+	else
+	{
+		if(m_sink)
+			write_log(m_sink, LL_ERROR, "[ParserXTP] Order Book subscribe faile, code: {}.{}", ticker->exchange_id == XTP_EXCHANGE_SH ? "SSE" : "SZSE", ticker->ticker);
+	}
+}
+
+void ParserXTP::OnUnSubOrderBook(XTPST *ticker, XTPRI *error_info, bool is_last)
+{
+
+}
+
+void ParserXTP::OnOrderBook(XTPOB *order_book)
+{
+	if(m_pBaseDataMgr == NULL)
+	{
+		return;
+	}
+
+	uint32_t actDate = (uint32_t)(order_book->data_time / 1000000000);
+	uint32_t actTime = order_book->data_time % 1000000000;
+	uint32_t actHour = actTime / 10000000;
+
+	std::string code, exchg;
+	if (order_book->exchange_id == XTP_EXCHANGE_SH)
+	{
+		exchg = "SSE";
+	}
+	else
+	{
+		exchg = "SZSE";
+	}
+	code = order_book->ticker;
+
+	WTSContractInfo* ct = m_pBaseDataMgr->getContract(code.c_str(), exchg.c_str());
+	if(ct == NULL)
+	{
+		if (m_sink)
+			write_log(m_sink, LL_ERROR, "[ParserXTP] Instrument {}.{} not exists...", exchg.c_str(), order_book->ticker);
+		return;
+	}
+	WTSCommodityInfo* commInfo = ct->getCommInfo();
+
+	WTSTickData* tick = WTSTickData::create(code.c_str());
+	tick->setContractInfo(ct);
+	WTSTickStruct& quote = tick->getTickStruct();
+	strcpy(quote.exchg, commInfo->getExchg());
+	
+	quote.action_date = actDate;
+	quote.action_time = actTime;
+	
+	quote.price = checkValid(order_book->last_price);
+	quote.total_volume = (uint32_t)order_book->qty;
+	quote.trading_date = m_uTradingDate;
+	quote.total_turnover = order_book->turnover;
+
+	//委卖价格
+	for (int i = 0; i < 10; i++)
+	{
+		quote.ask_prices[i] = checkValid(order_book->ask[i]);
+		quote.ask_qty[i] = (uint32_t)order_book->ask_qty[i];
+
+		quote.bid_prices[i] = checkValid(order_book->bid[i]);
+		quote.bid_qty[i] = (uint32_t)order_book->bid_qty[i];
+	}
+
+	// 以下内容都没有, 所以全部填0
+	quote.open = 0.0;
+	quote.high = 0.0;
+	quote.low = 0.0;
+	quote.upper_limit = 0.0;
+	quote.lower_limit = 0.0;
+	quote.pre_close = 0.0;
+
+	if(m_sink)
+		m_sink->handleQuote(tick, 1);
+
+	tick->release();
 }
 
 void ParserXTP::OnUnSubMarketData(XTPST *ticker, XTPRI *error_info, bool is_last)
@@ -346,7 +520,15 @@ void ParserXTP::DoSubscribeMD()
 
 		if (m_pUserAPI && nCount > 0)
 		{
-			int iResult = m_pUserAPI->SubscribeMarketData(subscribe, nCount, XTP_EXCHANGE_SH);
+			int iResult = -1;
+			if (m_subtype == SUB_TICK_DATA) {
+				iResult = m_pUserAPI->SubscribeTickByTick(subscribe, nCount, XTP_EXCHANGE_SH);
+			} else if (m_subtype == SUB_ORDER_BOOK) {
+				iResult = m_pUserAPI->SubscribeOrderBook(subscribe, nCount, XTP_EXCHANGE_SH);
+			} else if (m_subtype == SUB_MARKET_DATA) {
+				iResult = m_pUserAPI->SubscribeMarketData(subscribe, nCount, XTP_EXCHANGE_SH);
+			}
+
 			if (iResult != 0)
 			{
 				if (m_sink)
@@ -376,7 +558,15 @@ void ParserXTP::DoSubscribeMD()
 
 		if (m_pUserAPI && nCount > 0)
 		{
-			int iResult = m_pUserAPI->SubscribeMarketData(subscribe, nCount, XTP_EXCHANGE_SZ);
+			int iResult = -1;
+			if (m_subtype == SUB_TICK_DATA) {
+				iResult = m_pUserAPI->SubscribeTickByTick(subscribe, nCount, XTP_EXCHANGE_SZ);
+			} else if (m_subtype == SUB_ORDER_BOOK) {
+				iResult = m_pUserAPI->SubscribeOrderBook(subscribe, nCount, XTP_EXCHANGE_SZ);
+			} else if (m_subtype == SUB_MARKET_DATA) {
+				iResult = m_pUserAPI->SubscribeMarketData(subscribe, nCount, XTP_EXCHANGE_SZ);
+			}
+
 			if (iResult != 0)
 			{
 				if (m_sink)
@@ -447,7 +637,15 @@ void ParserXTP::subscribe(const CodeSet &vecSymbols)
 
 			if (m_pUserAPI && nCount > 0)
 			{
-				int iResult = m_pUserAPI->SubscribeMarketData(subscribe, nCount, XTP_EXCHANGE_SH);
+				int iResult = -1;
+				if (m_subtype == SUB_TICK_DATA) {
+					iResult = m_pUserAPI->SubscribeTickByTick(subscribe, nCount, XTP_EXCHANGE_SH);
+				} else if (m_subtype == SUB_ORDER_BOOK) {
+					iResult = m_pUserAPI->SubscribeOrderBook(subscribe, nCount, XTP_EXCHANGE_SH);
+				} else if (m_subtype == SUB_MARKET_DATA) {
+					iResult = m_pUserAPI->SubscribeMarketData(subscribe, nCount, XTP_EXCHANGE_SH);
+				}
+
 				if (iResult != 0)
 				{
 					if (m_sink)
@@ -474,7 +672,15 @@ void ParserXTP::subscribe(const CodeSet &vecSymbols)
 
 			if (m_pUserAPI && nCount > 0)
 			{
-				int iResult = m_pUserAPI->SubscribeMarketData(subscribe, nCount, XTP_EXCHANGE_SZ);
+				int iResult = -1;
+				if (m_subtype == SUB_TICK_DATA) {
+					iResult = m_pUserAPI->SubscribeTickByTick(subscribe, nCount, XTP_EXCHANGE_SZ);
+				} else if (m_subtype == SUB_ORDER_BOOK) {
+					iResult = m_pUserAPI->SubscribeOrderBook(subscribe, nCount, XTP_EXCHANGE_SZ);
+				} else if (m_subtype == SUB_MARKET_DATA) {
+					iResult = m_pUserAPI->SubscribeMarketData(subscribe, nCount, XTP_EXCHANGE_SZ);
+				}
+
 				if (iResult != 0)
 				{
 					if (m_sink)

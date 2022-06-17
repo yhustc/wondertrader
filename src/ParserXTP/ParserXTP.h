@@ -19,6 +19,12 @@ NS_WTP_END
 
 USING_NS_WTP;
 
+typedef enum SUB_DATA_TYPE {
+	SUB_TICK_DATA = 1,
+	SUB_ORDER_BOOK,
+	SUB_MARKET_DATA
+} SUB_DATA_TYPE;
+
 class ParserXTP :	public IParserApi, public XTP::API::QuoteSpi
 {
 public:
@@ -65,6 +71,13 @@ public:
 	///´íÎóÓ¦´ð
 	virtual void OnError(XTPRI *error_info) override;
 
+	virtual void OnSubTickByTick(XTPST *ticker, XTPRI *error_info, bool is_last) override;
+	virtual void OnUnSubTickByTick(XTPST *ticker, XTPRI *error_info, bool is_last) override;
+	virtual void OnTickByTick(XTPTBT *tbt_data) override;
+
+	virtual void OnSubOrderBook(XTPST *ticker, XTPRI *error_info, bool is_last) override;
+	virtual void OnUnSubOrderBook(XTPST *ticker, XTPRI *error_info, bool is_last) override;
+	virtual void OnOrderBook(XTPOB *order_book) override;
 
 	virtual void OnSubMarketData(XTPST *ticker, XTPRI *error_info, bool is_last) override;
 	virtual void OnUnSubMarketData(XTPST *ticker, XTPRI *error_info, bool is_last) override;
@@ -98,6 +111,7 @@ private:
 	std::string			m_strFlowDir;
 
 	XTP_PROTOCOL_TYPE	m_iProtocol;
+	SUB_DATA_TYPE		m_subtype;
 	uint32_t			m_uHBInterval;
 	uint32_t			m_uBuffSize;
 
