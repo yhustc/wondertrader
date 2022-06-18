@@ -315,8 +315,12 @@ bool WtRunner::initHftStrategies()
 		const char* name = cfgItem->getCString("name");
 		bool agent = cfgItem->getBoolean("agent");
 		HftStrategyPtr stra = _hft_stra_mgr.createStrategy(name, id);
-		if (stra == NULL)
+		if (stra == NULL) {
+			WTSLogger::error("Hft strategy {} create failed", name);
 			continue;
+		} else {
+			WTSLogger::info("Hft strategy {} create success", name);
+		}
 
 		stra->self()->init(cfgItem->get("params"));
 		HftStraContext* ctx = new HftStraContext(&_hft_engine, id, agent);

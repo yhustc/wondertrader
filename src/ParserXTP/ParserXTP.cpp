@@ -536,8 +536,14 @@ void ParserXTP::DoSubscribeMD()
 			}
 			else
 			{
-				if (m_sink)
-					write_log(m_sink, LL_INFO, "[ParserXTP] Market data of {} instruments of SSE subscribed", nCount);
+				if (m_sink) {
+					if (m_subtype == SUB_TICK_DATA)
+						write_log(m_sink, LL_INFO, "[ParserXTP] Tick data of {} instruments of SSE subscribed", nCount);
+					if (m_subtype == SUB_ORDER_BOOK)
+						write_log(m_sink, LL_INFO, "[ParserXTP] Order book of {} instruments of SSE subscribed", nCount);
+					if (m_subtype == SUB_MARKET_DATA)
+						write_log(m_sink, LL_INFO, "[ParserXTP] Market data of {} instruments of SSE subscribed", nCount);
+				}
 			}
 		}
 		codeFilter.clear();
@@ -574,8 +580,14 @@ void ParserXTP::DoSubscribeMD()
 			}
 			else
 			{
-				if (m_sink)
-					write_log(m_sink, LL_INFO, "[ParserXTP] Market data of {} instruments of SZSE subscribed", nCount);
+				if (m_sink) {
+					if (m_subtype == SUB_TICK_DATA)
+						write_log(m_sink, LL_INFO, "[ParserXTP] Tick data of {} instruments of SZSE subscribed", nCount);
+					if (m_subtype == SUB_ORDER_BOOK)
+						write_log(m_sink, LL_INFO, "[ParserXTP] Order book of {} instruments of SZSE subscribed", nCount);
+					if (m_subtype == SUB_MARKET_DATA)
+						write_log(m_sink, LL_INFO, "[ParserXTP] Market data of {} instruments of SZSE subscribed", nCount);
+				}
 			}
 		}
 		codeFilter.clear();
@@ -653,8 +665,14 @@ void ParserXTP::subscribe(const CodeSet &vecSymbols)
 				}
 				else
 				{
-					if (m_sink)
-						write_log(m_sink, LL_INFO, "[ParserXTP] Market data of {} instruments of SSE subscribed", nCount);
+					if (m_sink) {
+						if (m_subtype == SUB_TICK_DATA)
+							write_log(m_sink, LL_INFO, "[ParserXTP] Tick data of {} instruments of SSE subscribed", nCount);
+						if (m_subtype == SUB_ORDER_BOOK)
+							write_log(m_sink, LL_INFO, "[ParserXTP] Order book of {} instruments of SSE subscribed", nCount);
+						if (m_subtype == SUB_MARKET_DATA)
+							write_log(m_sink, LL_INFO, "[ParserXTP] Market data of {} instruments of SSE subscribed", nCount);
+					}
 				}
 			}
 			delete[] subscribe;
@@ -688,8 +706,14 @@ void ParserXTP::subscribe(const CodeSet &vecSymbols)
 				}
 				else
 				{
-					if (m_sink)
-						write_log(m_sink, LL_INFO, "[ParserXTP] Market data of {} instruments of SZSE subscribed", nCount);
+					if (m_sink) {
+						if (m_subtype == SUB_TICK_DATA)
+							write_log(m_sink, LL_INFO, "[ParserXTP] Tick data of {} instruments of SZSE subscribed", nCount);
+						if (m_subtype == SUB_ORDER_BOOK)
+							write_log(m_sink, LL_INFO, "[ParserXTP] Order book of {} instruments of SZSE subscribed", nCount);
+						if (m_subtype == SUB_MARKET_DATA)
+							write_log(m_sink, LL_INFO, "[ParserXTP] Market data of {} instruments of SZSE subscribed", nCount);
+					}
 				}
 			}
 			delete[] subscribe;
