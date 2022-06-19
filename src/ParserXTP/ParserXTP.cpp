@@ -259,9 +259,11 @@ void ParserXTP::OnTickByTick(XTPTBT *tbt_data)
 	XTPTickByTickTrade& trade = tbt_data->trade;
 	
 	quote.price = checkValid(trade.price);
-	quote.total_volume = (uint32_t)trade.qty;
+	quote.total_volume = 0.0;
+	quote.volume = (uint32_t)trade.qty;
 	quote.trading_date = m_uTradingDate;
-	quote.total_turnover = checkValid(trade.price) * trade.qty;
+	quote.total_turnover = 0.0;
+	quote.turn_over = checkValid(trade.price) * trade.qty;
 
 	// 以下内容都没有, 所以全部填0
 	quote.open = 0.0;
@@ -345,8 +347,10 @@ void ParserXTP::OnOrderBook(XTPOB *order_book)
 	
 	quote.price = checkValid(order_book->last_price);
 	quote.total_volume = (uint32_t)order_book->qty;
+	quote.volume = 0.0;
 	quote.trading_date = m_uTradingDate;
 	quote.total_turnover = order_book->turnover;
+	quote.turn_over = 0.0;
 
 	//委卖价格
 	for (int i = 0; i < 10; i++)
@@ -421,8 +425,10 @@ void ParserXTP::OnDepthMarketData(XTPMD *market_data, int64_t bid1_qty[], int32_
 	quote.high = checkValid(market_data->high_price);
 	quote.low = checkValid(market_data->low_price);
 	quote.total_volume = (uint32_t)market_data->qty;
+	quote.volume = 0.0;
 	quote.trading_date = m_uTradingDate;
 	quote.total_turnover = market_data->turnover;
+	quote.turn_over = 0.0;
 
 	if (commInfo->getCategoty() == CC_Future)
 	{
