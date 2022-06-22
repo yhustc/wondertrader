@@ -147,7 +147,7 @@ inline WTSOrderState wrapOrderState(XTP_ORDER_STATUS_TYPE orderState)
 	case XTP_ORDER_STATUS_PARTTRADEDQUEUEING:
 		return WOS_PartTraded_Queuing;
 	case XTP_ORDER_STATUS_PARTTRADEDNOTQUEUEING:
-		return WOS_PartTraded_NotQueuing;
+		return WOS_Canceled; // WOS_PartTraded_NotQueuing;
 	case XTP_ORDER_STATUS_NOTRADEQUEUEING:
 		return WOS_NotTraded_Queuing;
 	case XTP_ORDER_STATUS_CANCELED:
@@ -775,7 +775,7 @@ int TraderXTP::orderInsert(WTSEntrust* entrust)
 	XTPOrderInsertInfo req;
 	memset(&req, 0, sizeof(req));
 	
-	req.order_client_id = _client;
+	req.order_client_id = _ordref;
 	strcpy(req.ticker, entrust->getCode());
 	req.market = wt_stricmp(entrust->getExchg(), "SSE") == 0 ? XTP_MKT_SH_A : XTP_MKT_SZ_A;
 	req.price = entrust->getPrice();
@@ -810,7 +810,7 @@ int TraderXTP::orderAction(WTSEntrustAction* action)
 	}
 
 	uint64_t iResult = _api->CancelOrder(strtoull(action->getOrderID(), NULL, 10), _sessionid);
-	if (iResult != 0)
+	if (iResult == 0)
 	{
 		auto error_info = _api->GetApiLastError();
 		write_log(_sink,LL_ERROR, "[TraderXTP] Order cancelling failed: {}", error_info->error_msg);

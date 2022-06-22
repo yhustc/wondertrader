@@ -103,7 +103,9 @@ public:
 
 	virtual void handleQuote(WTSTickData *quote, uint32_t procFlag) override
 	{
-		WTSLogger::info("{}@{}.{}, price:{:.2f}, voume:{}, turnover: {:.2f}", quote->code(), quote->actiondate(), quote->actiontime(), quote->price(), quote->totalvolume(), quote->totalturnover());
+		WTSLogger::info("{}@{}.{}, price:{:.2f}, voulme:{}, turnover: {:.2f}, total_voulme:{}, total_turnover: {:.2f}", 
+					quote->code(), quote->actiondate(), quote->actiontime(), quote->price(), 
+					quote->volume(), quote->turnover(), quote->totalvolume(), quote->totalturnover());
 	}
 
 	virtual void handleSymbolList(const WTSArray* aySymbols) override
