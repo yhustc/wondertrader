@@ -140,5 +140,6 @@ private:
 	XTPCreator		m_funcCreator;
 
 	IniHelper		_ini;
+	uint32_t		_uniq_id;
 };
 

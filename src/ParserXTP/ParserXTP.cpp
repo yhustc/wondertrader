@@ -18,6 +18,7 @@
 #include "../Share/ModuleHelper.hpp"
 
 #include <boost/filesystem.hpp>
+#include <thread>
 
  //By Wesley @ 2022.01.05
 #include "../Share/fmtlib.h"
@@ -197,6 +198,10 @@ void ParserXTP::OnDisconnected(int nReason)
 		write_log(m_sink, LL_ERROR, "[ParserXTP] Market data server disconnected: {}...", nReason);
 		m_sink->handleEvent(WPE_Close, 0);
 	}
+	
+	std::this_thread::sleep_for(std::chrono::seconds(5));
+
+	DoLogin();
 }
 
 void ParserXTP::OnSubTickByTick(XTPST *ticker, XTPRI *error_info, bool is_last)

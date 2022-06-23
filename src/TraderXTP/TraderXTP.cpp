@@ -19,6 +19,7 @@
 #include "../Share/ModuleHelper.hpp"
 
 #include <boost/filesystem.hpp>
+#include <random>
 
  //By Wesley @ 2022.01.05
 #include "../Share/fmtlib.h"
@@ -168,6 +169,9 @@ TraderXTP::TraderXTP()
 	, _bd_mgr(NULL)
 	, _tradingday(0)
 {
+	static std::random_device rd;
+	static std::uniform_int_distribution<uint64_t> dist(0ULL, 0xFFFFFFFFFFFFFFFFULL);
+	_uniq_id = dist(rd) >> 32U;
 }
 
 
@@ -313,6 +317,10 @@ void TraderXTP::OnDisconnected(uint64_t session_id, int reason)
 {
 	if (_sink)
 		_sink->handleEvent(WTE_Close, reason);
+
+	std::this_thread::sleep_for(std::chrono::seconds(5));
+	
+	login(_user.c_str(), _pass.c_str(), NULL);
 }
 
 void TraderXTP::OnError(XTPRI *error_info)
@@ -675,7 +683,7 @@ bool TraderXTP::isConnected()
 std::string TraderXTP::genEntrustID(uint32_t orderRef)
 {
 	static char buffer[64] = { 0 };
-	fmtutil::format_to(buffer, "{}#{}#{}#{}", _user, _tradingday, _sessionid, orderRef);
+	fmtutil::format_to(buffer, "{}#{}#{}#{}", _user, _tradingday, _uniq_id, orderRef);
 	return buffer;
 }
 
