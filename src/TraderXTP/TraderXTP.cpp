@@ -695,7 +695,7 @@ bool TraderXTP::makeEntrustID(char* buffer, int length)
 	try
 	{
 		uint32_t orderref = _ordref.fetch_add(1) + 1;
-		fmtutil::format_to(buffer, "{}#{}#{}#{}", _user, _tradingday, _sessionid, orderref);
+		fmtutil::format_to(buffer, "{}#{}#{}#{}", _user, _tradingday, _uniq_id, orderref);
 		return true;
 	}
 	catch (...)
