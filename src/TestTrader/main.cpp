@@ -1,5 +1,7 @@
 #include <iostream>
 #include <boost/filesystem.hpp>
+#include <string>
+#include <unordered_map>
 
 #include "../Includes/ITraderApi.h"
 #include "../Includes/WTSVariant.hpp"
@@ -427,18 +429,19 @@ public:
 		if (ayOrders != NULL)
 			cnt = ayOrders->size();
 
-		if (m_mapOrds == NULL)
-			m_mapOrds = WTSObjectMap::create();
+		WTSLogger::info("[{}] Orders updated, {} orders totally", m_pParams->getCString("user"), cnt);
 
-		m_mapOrds->clear();
 		for (uint32_t i = 0; i < cnt; i++)
 		{
 			WTSOrderInfo* ordInfo = (WTSOrderInfo*)((WTSArray*)ayOrders)->at(i);
-			if (ordInfo->isAlive())
-				m_mapOrds->add(ordInfo->getOrderID(), ordInfo, true);
-		}
+			std::string direction = ordInfo->getDirection() == '0' ? "BUY" : "SELL";
+			m_order_direction[ordInfo->getOrderID()] = direction;
 
-		WTSLogger::info("[{}] Orders updated, {} orders totally, {} orders live", m_pParams->getCString("user"), cnt, m_mapOrds->size());
+			WTSLogger::info("\t- code: {} order id: {} order time: {} direction: {} price: {:.2f} traded: {:.0f} left: {:.0f} alive: {}",
+							ordInfo->getCode(), ordInfo->getOrderID(), ordInfo->getOrderTime(),
+							direction, ordInfo->getPrice(),
+							ordInfo->getVolTraded(), ordInfo->getVolLeft(), ordInfo->isAlive());
+		}
 
 		StdUniqueLock lock(g_mtxOpt);
 		g_condOpt.notify_all();
@@ -451,6 +454,26 @@ public:
 			cnt = ayTrades->size();
 
 		WTSLogger::info("[{}] Trades updates, {} trades totally", m_pParams->getCString("user"), cnt);
+
+		for (uint32_t i = 0; i < cnt; i++)
+		{
+			WTSTradeInfo* trdInfo = (WTSTradeInfo*)((WTSArray*)ayTrades)->at(i);
+			auto iter = m_order_direction.find(trdInfo->getRefOrder());
+			if (iter == m_order_direction.end())
+			{
+				WTSLogger::warn("please query orders first");
+				WTSLogger::info("\t- code: {} order id: {} trade time: {} price: {:.2f} volume: {:.0f}",
+							trdInfo->getCode(), trdInfo->getRefOrder(), trdInfo->getTradeTime(),
+							trdInfo->getPrice(), trdInfo->getVolume());
+			}
+			else
+			{
+				WTSLogger::info("\t- code: {} order id: {} trade time: {} direction: {} price: {:.2f} volume: {:.0f}",
+							trdInfo->getCode(), trdInfo->getRefOrder(), trdInfo->getTradeTime(),
+							iter->second, trdInfo->getPrice(), trdInfo->getVolume());
+			}
+		}
+
 		StdUniqueLock lock(g_mtxOpt);
 		g_condOpt.notify_all();
 	}
@@ -547,6 +570,8 @@ private:
 	WTSObjectMap*		m_mapOrds;
 
 	bool				m_bLogined;
+
+	std::unordered_map<std::string, std::string> m_order_direction;
 };
 
 std::string getBaseFolder()
