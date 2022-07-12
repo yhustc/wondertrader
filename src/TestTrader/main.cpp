@@ -434,7 +434,7 @@ public:
 		for (uint32_t i = 0; i < cnt; i++)
 		{
 			WTSOrderInfo* ordInfo = (WTSOrderInfo*)((WTSArray*)ayOrders)->at(i);
-			std::string direction = ordInfo->getDirection() == '0' ? "BUY" : "SELL";
+			std::string direction = (ordInfo->getDirection() == '0' && ordInfo->getOffsetType() == '0') ? "BUY" : "SELL";
 			m_order_direction[ordInfo->getOrderID()] = direction;
 
 			WTSLogger::info("\t- code: {} order id: {} order time: {} direction: {} price: {:.2f} traded: {:.0f} left: {:.0f} alive: {}",

@@ -130,6 +130,11 @@ bool ParserXTP::init(WTSVariant* config)
 	m_pUserAPI = m_funcCreator(m_uClientID, path.c_str(), XTP_LOG_LEVEL_DEBUG);
 	m_pUserAPI->RegisterSpi(this);
 
+    //真真真真真真真真
+	m_pUserAPI->SetHeartBeatInterval(m_uHBInterval); //真1.1.16真真
+	//真真真真真真真MB
+	m_pUserAPI->SetUDPBufferSize(m_uBuffSize);//真1.1.16真真
+
 	return true;
 }
 
