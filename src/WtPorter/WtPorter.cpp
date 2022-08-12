@@ -37,9 +37,9 @@ void register_evt_callback(FuncEventCallback cbEvt)
 	getRunner().registerEvtCallback(cbEvt);
 }
 
-void register_cta_callbacks(FuncStraInitCallback cbInit, FuncStraTickCallback cbTick, FuncStraCalcCallback cbCalc, FuncStraBarCallback cbBar, FuncSessionEvtCallback cbSessEvt)
+void register_cta_callbacks(FuncStraInitCallback cbInit, FuncStraTickCallback cbTick, FuncStraCalcCallback cbCalc, FuncStraBarCallback cbBar, FuncSessionEvtCallback cbSessEvt, FuncStraCondTriggerCallback cbCondTrigger/* = NULL*/)
 {
-	getRunner().registerCtaCallbacks(cbInit, cbTick, cbCalc, cbBar, cbSessEvt);
+	getRunner().registerCtaCallbacks(cbInit, cbTick, cbCalc, cbBar, cbSessEvt, cbCondTrigger);
 }
 
 void register_sel_callbacks(FuncStraInitCallback cbInit, FuncStraTickCallback cbTick, FuncStraCalcCallback cbCalc, FuncStraBarCallback cbBar, FuncSessionEvtCallback cbSessEvt)
@@ -140,7 +140,7 @@ const char* get_version()
 	return _ver.c_str();
 }
 
-const char* get_raw_stdcode(const char* stdCode, char* buffer)
+const char* get_raw_stdcode(const char* stdCode)
 {
 	return getRunner().get_raw_stdcode(stdCode);
 }
@@ -180,9 +180,9 @@ bool reg_exe_factories(const char* factFolder)
 
 #pragma region "CTA策略接口"
 
-CtxHandler create_cta_context(const char* name)
+CtxHandler create_cta_context(const char* name, int slippage)
 {
-	return getRunner().createCtaContext(name);
+	return getRunner().createCtaContext(name, slippage);
 }
 
 void cta_enter_long(CtxHandler cHandle, const char* stdCode, double qty, const char* userTag, double limitprice, double stopprice)
@@ -486,9 +486,9 @@ void cta_sub_ticks(CtxHandler cHandle, const char* stdCode)
 #pragma endregion
 
 #pragma region "多因子策略接口"
-CtxHandler create_sel_context(const char* name, uint32_t date, uint32_t time, const char* period, const char* trdtpl/* = "CHINA"*/, const char* session/* = "TRADING"*/)
+CtxHandler create_sel_context(const char* name, uint32_t date, uint32_t time, const char* period, const char* trdtpl/* = "CHINA"*/, const char* session/* = "TRADING"*/, int32_t slippage/* = 0*/)
 {
-	return getRunner().createSelContext(name, date, time, period, trdtpl, session);
+	return getRunner().createSelContext(name, date, time, period, slippage, trdtpl, session);
 }
 
 
@@ -651,9 +651,9 @@ void sel_sub_ticks(CtxHandler cHandle, const char* stdCode)
 #pragma endregion
 
 #pragma region "HFT策略接口"
-CtxHandler create_hft_context(const char* name, const char* trader, bool agent)
+CtxHandler create_hft_context(const char* name, const char* trader, bool agent, int32_t slippage/* = 0*/)
 {
-	return getRunner().createHftContext(name, trader, agent);
+	return getRunner().createHftContext(name, trader, agent, slippage);
 }
 
 double hft_get_position(CtxHandler cHandle, const char* stdCode, bool bOnlyValid)

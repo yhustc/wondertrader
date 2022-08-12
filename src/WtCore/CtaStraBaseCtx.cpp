@@ -52,7 +52,7 @@ inline uint32_t makeCtaCtxId()
 }
 
 
-CtaStraBaseCtx::CtaStraBaseCtx(WtCtaEngine* engine, const char* name)
+CtaStraBaseCtx::CtaStraBaseCtx(WtCtaEngine* engine, const char* name, int32_t slippage)
 	: ICtaStraCtx(name)
 	, _engine(engine)
 	, _total_calc_time(0)
@@ -61,6 +61,7 @@ CtaStraBaseCtx::CtaStraBaseCtx(WtCtaEngine* engine, const char* name)
 	, _is_in_schedule(false)
 	, _ud_modified(false)
 	, _last_barno(0)
+	, _slippage(slippage)
 {
 	_context_id = makeCtaCtxId();
 }
@@ -695,6 +696,11 @@ void CtaStraBaseCtx::on_tick(const char* stdCode, WTSTickData* newTick, bool bEm
 			{
 				const SigInfo& sInfo = it->second;
 				do_set_position(stdCode, sInfo._volume, sInfo._usertag.c_str(), sInfo._triggered);
+
+				//如果是条件单触发，则回调on_condition_triggered
+				if(sInfo._triggered)
+					on_condition_triggered(stdCode, sInfo._volume, newTick->price(), sInfo._usertag.c_str());
+
 				_sig_map.erase(it);
 			}
 			
@@ -862,7 +868,7 @@ bool CtaStraBaseCtx::on_schedule(uint32_t curDate, uint32_t curTime)
 			{
 				_condtions.clear();
 				on_calculate(curDate, curTime);
-				log_debug("Strategy {} scheduled @ {}", _context_id, curTime);
+				log_debug("Strategy {} scheduled @ {}", _name, curTime);
 				emmited = true;
 
 				_emit_times++;
@@ -1295,6 +1301,10 @@ void CtaStraBaseCtx::do_set_position(const char* stdCode, double qty, const char
 	if (commInfo == NULL)
 		return;
 
+	//成交价
+	double trdPx = curPx;
+
+	bool isBuy = decimal::gt(diff, 0.0);
 	if (decimal::gt(pInfo._volume*diff, 0))
 	{//当前持仓和仓位变化方向一致, 增加一条明细, 增加数量即可
 		pInfo._volume = qty;
@@ -1308,11 +1318,16 @@ void CtaStraBaseCtx::do_set_position(const char* stdCode, double qty, const char
 			log_debug("{} frozen position updated to {}", stdCode, pInfo._frozen);
 		}
 
+		if (_slippage != 0)
+		{
+			trdPx += _slippage * commInfo->getPriceTick()*(isBuy ? 1 : -1);
+		}
+
 		DetailInfo dInfo;
 		dInfo._long = decimal::gt(qty, 0);
-		dInfo._price = curPx;
-		dInfo._max_price = curPx;
-		dInfo._min_price = curPx;
+		dInfo._price = trdPx;
+		dInfo._max_price = trdPx;
+		dInfo._min_price = trdPx;
 		dInfo._volume = abs(diff);
 		dInfo._opentime = curTm;
 		dInfo._opentdate = curTDate;
@@ -1321,13 +1336,16 @@ void CtaStraBaseCtx::do_set_position(const char* stdCode, double qty, const char
 		pInfo._details.emplace_back(dInfo);
 		pInfo._last_entertime = curTm;
 
-		double fee = _engine->calc_fee(stdCode, curPx, abs(diff), 0);
+		double fee = _engine->calc_fee(stdCode, trdPx, abs(diff), 0);
 		_fund_info._total_fees += fee;
-		log_trade(stdCode, dInfo._long, true, curTm, curPx, abs(diff), userTag, fee, _last_barno);
+		log_trade(stdCode, dInfo._long, true, curTm, trdPx, abs(diff), userTag, fee, _last_barno);
 	}
 	else
 	{//持仓方向和仓位变化方向不一致, 需要平仓
 		double left = abs(diff);
+
+		if (_slippage != 0)
+			trdPx += _slippage * commInfo->getPriceTick()*(isBuy ? 1 : -1);
 
 		pInfo._volume = qty;
 		if (decimal::eq(pInfo._volume, 0))
@@ -1353,7 +1371,7 @@ void CtaStraBaseCtx::do_set_position(const char* stdCode, double qty, const char
 				count++;
 
 			//计算平仓盈亏
-			double profit = (curPx - dInfo._price) * maxQty * commInfo->getVolScale();
+			double profit = (trdPx - dInfo._price) * maxQty * commInfo->getVolScale();
 			if (!dInfo._long)
 				profit *= -1;
 			pInfo._closeprofit += profit;
@@ -1364,12 +1382,12 @@ void CtaStraBaseCtx::do_set_position(const char* stdCode, double qty, const char
 			_fund_info._total_profit += profit;
 
 			//计算手续费
-			double fee = _engine->calc_fee(stdCode, curPx, maxQty, dInfo._opentdate == curTDate ? 2 : 1);
+			double fee = _engine->calc_fee(stdCode, trdPx, maxQty, dInfo._opentdate == curTDate ? 2 : 1);
 			_fund_info._total_fees += fee;
 			//这里写成交记录
-			log_trade(stdCode, dInfo._long, false, curTm, curPx, maxQty, userTag, fee, _last_barno);
+			log_trade(stdCode, dInfo._long, false, curTm, trdPx, maxQty, userTag, fee, _last_barno);
 			//这里写平仓记录
-			log_close(stdCode, dInfo._long, dInfo._opentime, dInfo._price, curTm, curPx, maxQty, profit, pInfo._closeprofit, dInfo._opentag, userTag, dInfo._open_barno, _last_barno);
+			log_close(stdCode, dInfo._long, dInfo._opentime, dInfo._price, curTm, trdPx, maxQty, profit, pInfo._closeprofit, dInfo._opentag, userTag, dInfo._open_barno, _last_barno);
 
 			if (decimal::eq(left,0))
 				break;
@@ -1398,9 +1416,9 @@ void CtaStraBaseCtx::do_set_position(const char* stdCode, double qty, const char
 
 			DetailInfo dInfo;
 			dInfo._long = decimal::gt(qty, 0);
-			dInfo._price = curPx;
-			dInfo._max_price = curPx;
-			dInfo._min_price = curPx;
+			dInfo._price = trdPx;
+			dInfo._max_price = trdPx;
+			dInfo._min_price = trdPx;
 			dInfo._volume = abs(left);
 			dInfo._opentime = curTm;
 			dInfo._opentdate = curTDate;
@@ -1410,9 +1428,9 @@ void CtaStraBaseCtx::do_set_position(const char* stdCode, double qty, const char
 			pInfo._last_entertime = curTm;
 
 			//这里还需要写一笔成交记录
-			double fee = _engine->calc_fee(stdCode, curPx, abs(left), 0);
+			double fee = _engine->calc_fee(stdCode, trdPx, abs(left), 0);
 			_fund_info._total_fees += fee;
-			log_trade(stdCode, dInfo._long, true, curTm, curPx, abs(left), userTag, fee, _last_barno);
+			log_trade(stdCode, dInfo._long, true, curTm, trdPx, abs(left), userTag, fee, _last_barno);
 		}
 	}
 
@@ -1436,7 +1454,7 @@ WTSKlineSlice* CtaStraBaseCtx::stra_get_bars(const char* stdCode, const char* pe
 		if (_main_key.empty())
 		{
 			_main_key = key;
-			log_debug("Main KBars confirmed：{}", key);
+			log_debug("Main KBars confirmed: {}", key);
 		}
 		else if (_main_key != key)
 			throw std::runtime_error("Main KBars already confirmed");

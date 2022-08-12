@@ -233,6 +233,11 @@ bool WtRunner::config()
 					{
 						if (!initExecuters(var->get("executers")))
 							WTSLogger::error("Loading executers failed");
+
+						WTSVariant* c = var->get("routers");
+						if (c != NULL)
+							_cta_engine.loadRouterRules(c);
+
 						var->release();
 					}
 					else
@@ -251,6 +256,9 @@ bool WtRunner::config()
 			}
 		}
 
+		WTSVariant* cfgRouter = _config->get("routers");
+		if (cfgRouter != NULL)
+			_cta_engine.loadRouterRules(cfgRouter);
 	}
 
 	if (!_is_hft)
@@ -282,9 +290,10 @@ bool WtRunner::initCtaStrategies()
 
 		const char* id = cfgItem->getCString("id");
 		const char* name = cfgItem->getCString("name");
+		int32_t slippage = cfgItem->getInt32("slippage");
 		CtaStrategyPtr stra = _cta_stra_mgr.createStrategy(name, id);
 		stra->self()->init(cfgItem->get("params"));
-		CtaStraContext* ctx = new CtaStraContext(&_cta_engine, id);
+		CtaStraContext* ctx = new CtaStraContext(&_cta_engine, id, slippage);
 		ctx->set_strategy(stra->self());
 		_cta_engine.addContext(CtaContextPtr(ctx));
 	}
@@ -314,6 +323,7 @@ bool WtRunner::initHftStrategies()
 		const char* id = cfgItem->getCString("id");
 		const char* name = cfgItem->getCString("name");
 		bool agent = cfgItem->getBoolean("agent");
+		int32_t slippage = cfgItem->getInt32("slippage");
 		HftStrategyPtr stra = _hft_stra_mgr.createStrategy(name, id);
 		if (stra == NULL) {
 			WTSLogger::error("Hft strategy {} create failed", name);
@@ -323,7 +333,7 @@ bool WtRunner::initHftStrategies()
 		}
 
 		stra->self()->init(cfgItem->get("params"));
-		HftStraContext* ctx = new HftStraContext(&_hft_engine, id, agent);
+		HftStraContext* ctx = new HftStraContext(&_hft_engine, id, agent,slippage);
 		ctx->set_strategy(stra->self());
 
 		const char* traderid = cfgItem->getCString("trader");

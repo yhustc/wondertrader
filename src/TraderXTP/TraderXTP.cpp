@@ -19,7 +19,6 @@
 #include "../Share/ModuleHelper.hpp"
 
 #include <boost/filesystem.hpp>
-#include <random>
 
  //By Wesley @ 2022.01.05
 #include "../Share/fmtlib.h"
@@ -147,10 +146,9 @@ inline WTSOrderState wrapOrderState(XTP_ORDER_STATUS_TYPE orderState)
 		return WOS_AllTraded;
 	case XTP_ORDER_STATUS_PARTTRADEDQUEUEING:
 		return WOS_PartTraded_Queuing;
-	case XTP_ORDER_STATUS_PARTTRADEDNOTQUEUEING:
-		return WOS_Canceled; // WOS_PartTraded_NotQueuing;
 	case XTP_ORDER_STATUS_NOTRADEQUEUEING:
 		return WOS_NotTraded_Queuing;
+	case XTP_ORDER_STATUS_PARTTRADEDNOTQUEUEING:
 	case XTP_ORDER_STATUS_CANCELED:
 		return WOS_Canceled;
 	default:
@@ -158,20 +156,27 @@ inline WTSOrderState wrapOrderState(XTP_ORDER_STATUS_TYPE orderState)
 	}
 }
 
+inline uint32_t makeRefID()
+{
+	static std::atomic<uint32_t> auto_refid(0);
+	if(auto_refid == 0)
+		auto_refid = (uint32_t)((TimeUtils::getLocalTimeNow() - TimeUtils::makeTime(20220101, 0)) / 1000 * 100);
+	return auto_refid.fetch_add(1);
+}
+
+
 TraderXTP::TraderXTP()
 	: _api(NULL)
 	, _sink(NULL)
-	, _ordref(1)
+	, _ordref(makeRefID())
 	, _reqid(1)
 	, _orders(NULL)
 	, _trades(NULL)
 	, _positions(NULL)
 	, _bd_mgr(NULL)
 	, _tradingday(0)
+	, _inited(false)
 {
-	static std::random_device rd;
-	static std::uniform_int_distribution<uint64_t> dist(0ULL, 0xFFFFFFFFFFFFFFFFULL);
-	_uniq_id = dist(rd) >> 32U;
 }
 
 
@@ -317,10 +322,12 @@ void TraderXTP::OnDisconnected(uint64_t session_id, int reason)
 {
 	if (_sink)
 		_sink->handleEvent(WTE_Close, reason);
-
-	std::this_thread::sleep_for(std::chrono::seconds(5));
 	
-	login(_user.c_str(), _pass.c_str(), NULL);
+	_asyncio.post([this](){
+		write_log(_sink, LL_WARN, "[TraderrXTP] Connection lost, relogin in 2 seconds...");
+		std::this_thread::sleep_for(std::chrono::seconds(2));
+		doLogin();
+	});
 }
 
 void TraderXTP::OnError(XTPRI *error_info)
@@ -683,8 +690,21 @@ bool TraderXTP::isConnected()
 std::string TraderXTP::genEntrustID(uint32_t orderRef)
 {
 	static char buffer[64] = { 0 };
-	fmtutil::format_to(buffer, "{}#{}#{}#{}", _user, _tradingday, _uniq_id, orderRef);
+	//这里不再使用sessionid，因为每次登陆会不同，如果使用的话，可能会造成不唯一的情况
+	fmtutil::format_to(buffer, "{}#{}#{}", _user, _tradingday, orderRef);
+
 	return buffer;
+}
+
+bool TraderXTP::extractEntrustID(const char* entrustid, uint32_t &orderRef)
+{
+	auto idx = StrUtil::findLast(entrustid, '#');
+	if (idx == std::string::npos)
+		return false;
+
+	orderRef = strtoul(entrustid + idx + 1, NULL, 10);
+
+	return true;
 }
 
 bool TraderXTP::makeEntrustID(char* buffer, int length)
@@ -695,7 +715,8 @@ bool TraderXTP::makeEntrustID(char* buffer, int length)
 	try
 	{
 		uint32_t orderref = _ordref.fetch_add(1) + 1;
-		fmtutil::format_to(buffer, "{}#{}#{}#{}", _user, _tradingday, _uniq_id, orderref);
+		fmtutil::format_to(buffer, "{}#{}#{}", _user, _tradingday, orderref);
+
 		return true;
 	}
 	catch (...)
@@ -704,6 +725,64 @@ bool TraderXTP::makeEntrustID(char* buffer, int length)
 	}
 
 	return false;
+}
+
+void TraderXTP::doLogin()
+{
+	_state = TS_LOGINING;
+
+	uint64_t iResult = _api->Login(_host.c_str(), _port, _user.c_str(), _pass.c_str(), XTP_PROTOCOL_TCP);
+	if (iResult == 0)
+	{
+		auto error_info = _api->GetApiLastError();
+		write_log(_sink, LL_ERROR, "[TraderXTP] Login failed: {}", error_info->error_msg);
+		std::string msg = error_info->error_msg;
+		_state = TS_LOGINFAILED;
+		_asyncio.post([this, msg] {
+			_sink->onLoginResult(false, msg.c_str(), 0);
+		});
+	}
+	else
+	{
+		_sessionid = iResult;
+		if (!_inited)
+		{
+			_tradingday = strtoul(_api->GetTradingDay(), NULL, 10);
+
+			std::stringstream ss;
+			ss << "./xtpdata/local/";
+			std::string path = StrUtil::standardisePath(ss.str());
+			if (!StdFile::exists(path.c_str()))
+				boost::filesystem::create_directories(path.c_str());
+			ss << _user << ".dat";
+
+			_ini.load(ss.str().c_str());
+			uint32_t lastDate = _ini.readUInt("marker", "date", 0);
+			if (lastDate != _tradingday)
+			{
+				//交易日不同,清理掉原来的数据
+				_ini.removeSection(ORDER_SECTION);
+				_ini.writeUInt("marker", "date", _tradingday);
+				_ini.save();
+
+				write_log(_sink, LL_INFO, "[TraderXTP] [{}] Trading date changed [{} -> {}], local cache cleared...", _user.c_str(), lastDate, _tradingday);
+			}
+
+			write_log(_sink, LL_INFO, "[TraderXTP] [{}] Login succeed, trading date: {}...", _user.c_str(), _tradingday);
+
+			_state = TS_LOGINED;
+			_inited = true;
+			_asyncio.post([this] {
+				_sink->onLoginResult(true, 0, _tradingday);
+				_state = TS_ALLREADY;
+			});
+		}
+		else
+		{
+			write_log(_sink, LL_INFO, "[TraderXTP] [{}] Connection recovered", _user.c_str());
+			_state = TS_ALLREADY;
+		}
+	}
 }
 
 int TraderXTP::login(const char* user, const char* pass, const char* productInfo)
@@ -716,51 +795,7 @@ int TraderXTP::login(const char* user, const char* pass, const char* productInfo
 		return -1;
 	}
 
-	_state = TS_LOGINING;
-
-	uint64_t iResult = _api->Login(_host.c_str(), _port, user, pass, XTP_PROTOCOL_TCP);
-	if (iResult == 0)
-	{
-		auto error_info = _api->GetApiLastError();
-		write_log(_sink,LL_ERROR, "[TraderXTP] Login failed: {}", error_info->error_msg);
-		std::string msg = error_info->error_msg;
-		_state = TS_LOGINFAILED;
-		_asyncio.post([this, msg]{
-			_sink->onLoginResult(false, msg.c_str(), 0);
-		});
-	}
-	else
-	{
-		_sessionid = iResult;
-		_tradingday = strtoul(_api->GetTradingDay(), NULL, 10);
-
-		std::stringstream ss;
-		ss << "./xtpdata/local/";
-		std::string path = StrUtil::standardisePath(ss.str());
-		if (!StdFile::exists(path.c_str()))
-			boost::filesystem::create_directories(path.c_str());
-		ss << _user << ".dat";
-
-		_ini.load(ss.str().c_str());
-		uint32_t lastDate = _ini.readUInt("marker", "date", 0);
-		if (lastDate != _tradingday)
-		{
-			//交易日不同,清理掉原来的数据
-			_ini.removeSection(ORDER_SECTION);
-			_ini.writeUInt("marker", "date", _tradingday);
-			_ini.save();
-
-			write_log(_sink,LL_INFO, "[TraderXTP] [{}] Trading date changed [{} -> {}], local cache cleared...", _user.c_str(), lastDate, _tradingday);
-		}		
-
-		write_log(_sink,LL_INFO, "[TraderXTP] [{}] Login succeed, trading date: {}...", _user.c_str(), _tradingday);
-
-		_state = TS_LOGINED;
-		_asyncio.post([this]{
-			_sink->onLoginResult(true, 0, _tradingday);
-			_state = TS_ALLREADY;
-		});
-	}
+	doLogin();
 	return 0;
 }
 
@@ -783,7 +818,9 @@ int TraderXTP::orderInsert(WTSEntrust* entrust)
 	XTPOrderInsertInfo req;
 	memset(&req, 0, sizeof(req));
 	
-	req.order_client_id = _ordref;
+	uint32_t orderref;
+	extractEntrustID(entrust->getEntrustID(), orderref);
+	req.order_client_id = orderref;
 	strcpy(req.ticker, entrust->getCode());
 	req.market = wt_stricmp(entrust->getExchg(), "SSE") == 0 ? XTP_MKT_SH_A : XTP_MKT_SZ_A;
 	req.price = entrust->getPrice();

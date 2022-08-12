@@ -240,11 +240,12 @@ bool HftMocker::init_hft_factory(WTSVariant* cfg)
 	WTSVariant* cfgStra = cfg->get("strategy");
 	if(cfgStra)
 	{
-		_strategy = _factory._fact->createStrategy(cfgStra->getCString("name"), "hft");
-		
+		_strategy = _factory._fact->createStrategy(cfgStra->getCString("name"), cfgStra->getCString("id"));
 		WTSVariant* paramCfg = cfgStra->get("params");
 		_strategy->init(paramCfg);
+		_name = _strategy->id();
 
+		// 这一段的作用是设置底仓, 用于回测日内T+0交易. yhustc
 		const char* code = paramCfg->getCString("code");
 		PosInfo& pInfo = _pos_map[code];
 		pInfo._volume = paramCfg->getDouble("volume");
