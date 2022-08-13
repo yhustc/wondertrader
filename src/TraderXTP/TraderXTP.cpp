@@ -88,16 +88,17 @@ inline XTP_SIDE_TYPE wrapDirectionType(WTSDirectionType dirType, WTSOffsetType o
 
 inline WTSDirectionType wrapDirectionType(XTP_SIDE_TYPE side, XTP_POSITION_EFFECT_TYPE pe)
 {
-	if (XTP_SIDE_BUY == side)
-		if (pe == XTP_POSITION_EFFECT_OPEN)
-			return WDT_LONG;
-		else
-			return WDT_SHORT;
-	else
-		if (pe == XTP_POSITION_EFFECT_OPEN)
-			return WDT_SHORT;
-		else
-			return WDT_LONG;
+	// if (XTP_SIDE_BUY == side)
+	// 	if (pe == XTP_POSITION_EFFECT_OPEN)
+	// 		return WDT_LONG;
+	// 	else
+	// 		return WDT_SHORT;
+	// else
+	// 	if (pe == XTP_POSITION_EFFECT_OPEN)
+	// 		return WDT_SHORT;
+	// 	else
+	// 		return WDT_LONG;
+	return WDT_LONG;  // XTP股票只能做多
 }
 
 inline XTP_POSITION_EFFECT_TYPE wrapOffsetType(WTSOffsetType offType)

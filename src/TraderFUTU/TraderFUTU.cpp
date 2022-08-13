@@ -1,4 +1,5 @@
 
+#include <time.h>
 #include "TraderFUTU.h"
 
 #include "../Includes/IBaseDataMgr.h"
@@ -11,7 +12,6 @@
 #include "../Share/ModuleHelper.hpp"
 
 #include <boost/filesystem.hpp>
-#include <random>
 
 using namespace std;
 using namespace Futu;
@@ -50,17 +50,6 @@ extern "C"
 const char* ENTRUST_SECTION = "entrusts";
 const char* ORDER_SECTION = "orders";
 
-
-inline WTSDirectionType wrapPosDirection(google::protobuf::int32 position_side)
-{
-	switch (position_side)
-	{
-	case Trd_Common::PositionSide_Short: return WDT_SHORT;
-	default:
-		return WDT_LONG;
-	}
-}
-
 inline google::protobuf::int32 wrapDirectionType(WTSDirectionType dirType, WTSOffsetType offsetType)
 {
 	if (WDT_LONG == dirType)
@@ -75,48 +64,21 @@ inline google::protobuf::int32 wrapDirectionType(WTSDirectionType dirType, WTSOf
 			return Trd_Common::TrdSide_Buy;
 }
 
-inline WTSDirectionType wrapDirectionType(google::protobuf::int32 side)
-{
-	if (Trd_Common::TrdSide_Buy == side)
-		return WDT_LONG;
-	else
-		return WDT_SHORT;
-}
 
-inline XTP_POSITION_EFFECT_TYPE wrapOffsetType(WTSOffsetType offType)
+inline WTSPriceType wrapPriceType(google::protobuf::int32 orderType)
 {
-	if (WOT_OPEN == offType)
-		return XTP_POSITION_EFFECT_OPEN;
-	else if (WOT_CLOSE == offType)
-		return XTP_POSITION_EFFECT_CLOSE;
-	else if (WOT_CLOSETODAY == offType)
-		return XTP_POSITION_EFFECT_CLOSETODAY;
-	else if (WOT_CLOSEYESTERDAY == offType)
-		return XTP_POSITION_EFFECT_CLOSE;
-	else
-		return XTP_POSITION_EFFECT_FORCECLOSE;
-}
-
-inline WTSOffsetType wrapOffsetType(XTP_POSITION_EFFECT_TYPE offType)
-{
-	if (XTP_POSITION_EFFECT_OPEN == offType)
-		return WOT_OPEN;
-	else if (XTP_POSITION_EFFECT_CLOSE == offType)
-		return WOT_CLOSE;
-	else if (XTP_POSITION_EFFECT_CLOSETODAY == offType)
-		return WOT_CLOSETODAY;
-	else if (XTP_POSITION_EFFECT_CLOSE == offType)
-		return WOT_CLOSEYESTERDAY;
-	else
-		return WOT_FORCECLOSE;
-}
-
-inline WTSPriceType wrapPriceType(XTP_PRICE_TYPE priceType)
-{
-	if (XTP_PRICE_LIMIT == priceType)
+	if (Trd_Common::OrderType_Normal == orderType)
 		return WPT_LIMITPRICE;
 	else 
 		return WPT_ANYPRICE;
+}
+
+inline WTSOffsetType wrapOffsetType(google::protobuf::int32 side)
+{
+	if (Trd_Common::TrdSide_Buy == side)
+		return WOT_OPEN;
+	else
+		return WOT_CLOSE;
 }
 
 inline WTSOrderState wrapOrderState(google::protobuf::int32 orderState)
@@ -129,10 +91,9 @@ inline WTSOrderState wrapOrderState(google::protobuf::int32 orderState)
 		return WOS_AllTraded;
 	case Trd_Common::OrderStatus_Filled_Part:
 		return WOS_PartTraded_Queuing;
-	case Trd_Common::OrderStatus_Cancelled_Part:
-		return WOS_Canceled; // WOS_PartTraded_NotQueuing;
 	case Trd_Common::OrderStatus_Submitted:
 		return WOS_NotTraded_Queuing;
+	case Trd_Common::OrderStatus_Cancelled_Part:
 	case Trd_Common:: OrderStatus_Cancelled_All:
 		return WOS_Canceled;
 	default:
@@ -151,10 +112,8 @@ TraderFUTU::TraderFUTU()
 	, _positions(NULL)
 	, _bd_mgr(NULL)
 	, _tradingday(0)
+	, _thrd_worker(NULL)
 {
-	static std::random_device rd;
-	static std::uniform_int_distribution<uint64_t> dist(0ULL, 0xFFFFFFFFFFFFFFFFULL);
-	_uniq_id = dist(rd) >> 32U;
 }
 
 
@@ -169,13 +128,13 @@ WTSEntrust* TraderFUTU::makeEntrust(const Trd_Common::Order& order_info)
 	std::string exchg("HKSE");
 	switch (order_info.secmarket())
 	{
-	case Qot_Common::QotMarket_CNSH_Security:
+	case Trd_Common::TrdSecMarket_CN_SH:
 		exchg = "SSE";
 		break;
-	case Qot_Common::QotMarket_CNSZ_Security:
+	case Trd_Common::TrdSecMarket_CN_SZ:
 		exchg = "SZSE";
 		break;
-	case Qot_Common::QotMarket_HK_Security:
+	case Trd_Common::TrdSecMarket_HK:
 		exchg = "HKSE";
 		break;
 	default:
@@ -192,12 +151,12 @@ WTSEntrust* TraderFUTU::makeEntrust(const Trd_Common::Order& order_info)
 		order_info.price(),
 		ct->getExchg());
 	pRet->setContractInfo(ct);
-	pRet->setDirection(wrapDirectionType(order_info->side, order_info->position_effect));
-	pRet->setPriceType(wrapPriceType(order_info->price_type));
-	pRet->setOffsetType(wrapOffsetType(order_info->position_effect));
+	pRet->setDirection(WDT_LONG);  // 股票只有做多
+	pRet->setPriceType(wrapPriceType(order_info.ordertype()));
+	pRet->setOffsetType(wrapOffsetType(order_info.trdside()));
 	pRet->setOrderFlag(WOF_NOR);
 
-	pRet->setEntrustID(genEntrustID(order_info->order_client_id).c_str());
+	pRet->setEntrustID(genEntrustID(order_info.orderid()).c_str());
 
 	std::string usertag = _ini.readString(ENTRUST_SECTION, pRet->getEntrustID());
 	if (!usertag.empty())
@@ -206,43 +165,57 @@ WTSEntrust* TraderFUTU::makeEntrust(const Trd_Common::Order& order_info)
 	return pRet;
 }
 
-WTSOrderInfo* TraderFUTU::makeOrderInfo(const Trd_Common::Order order_info)
+WTSOrderInfo* TraderFUTU::makeOrderInfo(const Trd_Common::Order& order_info)
 {
-	std::string code, exchg;
-	if (order_info->market == XTP_MKT_SH_A)
+	const std::string& code = order_info.code();
+	std::string exchg("HKSE");
+	switch (order_info.secmarket())
+	{
+	case Trd_Common::TrdSecMarket_CN_SH:
 		exchg = "SSE";
-	else
+		break;
+	case Trd_Common::TrdSecMarket_CN_SZ:
 		exchg = "SZSE";
-	code = order_info->ticker;
+		break;
+	case Trd_Common::TrdSecMarket_HK:
+		exchg = "HKSE";
+		break;
+	default:
+		break;
+	}
+
 	WTSContractInfo* contract = _bd_mgr->getContract(code.c_str(), exchg.c_str());
 	if (contract == NULL)
 		return NULL;
 
 	WTSOrderInfo* pRet = WTSOrderInfo::create();
 	pRet->setContractInfo(contract);
-	pRet->setPrice(order_info->price);
-	pRet->setVolume((uint32_t)order_info->quantity);
-	pRet->setDirection(wrapDirectionType(order_info->side, order_info->position_effect));
-	pRet->setPriceType(wrapPriceType(order_info->price_type));
+	pRet->setPrice(order_info.price());
+	pRet->setVolume(order_info.qty());
+	pRet->setDirection(WDT_LONG);  // 股票只有做多
+	pRet->setPriceType(wrapPriceType(order_info.ordertype()));
+	pRet->setOffsetType(wrapOffsetType(order_info.trdside()));
 	pRet->setOrderFlag(WOF_NOR);
-	pRet->setOffsetType(wrapOffsetType(order_info->position_effect));
 
-	pRet->setVolTraded((uint32_t)order_info->qty_traded);
-	pRet->setVolLeft((uint32_t)order_info->qty_left);
+	pRet->setVolTraded(order_info.fillqty());
+	pRet->setVolLeft(order_info.qty() - order_info.fillqty());
 
 	pRet->setCode(code.c_str());
 	pRet->setExchange(contract->getExchg());
 
-	pRet->setOrderDate((uint32_t)(order_info->insert_time / 1000000000));
-	uint32_t uTime = order_info->insert_time % 1000000000;
-	pRet->setOrderTime(TimeUtils::makeTime(pRet->getOrderDate(), uTime));
+	const time_t create_ts = (const time_t)order_info.updatetimestamp();  // 单位是秒
+	struct tm* dt = localtime(&create_ts);
+	uint32_t create_date = (1900 + dt->tm_year) * 10000 + (1 + dt->tm_mon) * 100 + dt->tm_mday;
+	uint32_t create_time = (dt->tm_hour * 10000 + dt->tm_min * 100 + dt->tm_sec) * 1000;  // 转换为毫秒
+	pRet->setOrderDate(create_date);
+	pRet->setOrderTime(TimeUtils::makeTime(pRet->getOrderDate(), create_time));
 
-	pRet->setOrderState(wrapOrderState(order_info->order_status));
-	if (order_info->order_status >= XTP_ORDER_STATUS_REJECTED)
+	pRet->setOrderState(wrapOrderState(order_info.orderstatus()));
+	if (order_info.orderstatus() == Trd_Common::OrderStatus_SubmitFailed || order_info.orderstatus() == Trd_Common::OrderStatus_Failed)
 		pRet->setError(true);
 
-	pRet->setEntrustID(genEntrustID(order_info->order_client_id).c_str());
-	pRet->setOrderID(fmt::format("{}", order_info->order_xtp_id).c_str());
+	pRet->setEntrustID(genEntrustID(order_info.orderid()).c_str());
+	pRet->setOrderID(fmt::format("{}", order_info.orderid()).c_str());
 
 	pRet->setStateMsg("");
 
@@ -267,36 +240,46 @@ WTSOrderInfo* TraderFUTU::makeOrderInfo(const Trd_Common::Order order_info)
 
 WTSTradeInfo* TraderFUTU::makeTradeInfo(const Trd_Common::OrderFill& trade_info)
 {
-	std::string code, exchg;
-	if (trade_info->market == XTP_MKT_SH_A)
+	const std::string& code = trade_info.code();
+	std::string exchg("HKSE");
+	switch (trade_info.secmarket())
+	{
+	case Trd_Common::TrdSecMarket_CN_SH:
 		exchg = "SSE";
-	else
+		break;
+	case Trd_Common::TrdSecMarket_CN_SZ:
 		exchg = "SZSE";
-	code = trade_info->ticker;
+		break;
+	case Trd_Common::TrdSecMarket_HK:
+		exchg = "HKSE";
+		break;
+	default:
+		break;
+	}
+
 	WTSContractInfo* contract = _bd_mgr->getContract(code.c_str(), exchg.c_str());
 	if (contract == NULL)
 		return NULL;
 
 	WTSTradeInfo *pRet = WTSTradeInfo::create(code.c_str(), exchg.c_str());
-	pRet->setVolume((uint32_t)trade_info->quantity);
-	pRet->setPrice(trade_info->price);
-	pRet->setTradeID(trade_info->exec_id);
+	pRet->setVolume(trade_info.qty());
+	pRet->setPrice(trade_info.price());
+	pRet->setTradeID(fmt::to_string(trade_info.fillid()).c_str());
 	pRet->setContractInfo(contract);
 
-	uint32_t uTime = (uint32_t)(trade_info->trade_time % 1000000000);
-	uint32_t uDate = (uint32_t)(trade_info->trade_time / 1000000000);
+	const time_t create_ts = (const time_t)trade_info.updatetimestamp();  // 单位是秒
+	struct tm* dt = localtime(&create_ts);
+	uint32_t create_date = (1900 + dt->tm_year) * 10000 + (1 + dt->tm_mon) * 100 + dt->tm_mday;
+	uint32_t create_time = (dt->tm_hour * 10000 + dt->tm_min * 100 + dt->tm_sec) * 1000;  // 转换为毫秒
+	pRet->setTradeDate(create_date);
+	pRet->setTradeTime(TimeUtils::makeTime(create_date, create_time));
 
-	pRet->setTradeDate(uDate);
-	pRet->setTradeTime(TimeUtils::makeTime(uDate, uTime));
-
-	WTSDirectionType dType = wrapDirectionType(trade_info->side, trade_info->position_effect);
-
-	pRet->setDirection(dType);
-	pRet->setOffsetType(wrapOffsetType(trade_info->position_effect));
-	pRet->setRefOrder(fmt::format("{}", trade_info->order_xtp_id).c_str());
+	pRet->setDirection(WDT_LONG);  // 股票只能做多
+	pRet->setOffsetType(wrapOffsetType(trade_info.trdside()));
+	pRet->setRefOrder(fmt::to_string(trade_info.orderid()).c_str());
 	pRet->setTradeType(WTT_Common);
 
-	double amount = trade_info->quantity*pRet->getPrice();
+	double amount = trade_info.qty() * pRet->getPrice();
 	pRet->setAmount(amount);
 
 	std::string usertag = _ini.readString(ORDER_SECTION, StrUtil::trim(pRet->getRefOrder()).c_str());
@@ -306,15 +289,253 @@ WTSTradeInfo* TraderFUTU::makeTradeInfo(const Trd_Common::OrderFill& trade_info)
 	return pRet;
 }
 
+
+bool TraderFUTU::init(WTSVariant *params)
+{
+	_user = params->getInt32("user");
+
+	if (params->getBoolean("simulate"))
+		_env = Trd_Common::TrdEnv_Simulate;
+	else
+		_env = Trd_Common::TrdEnv_Real;
+
+	if (strcasecmp(params->getCString("market"), "HK") == 0)
+		_market = Trd_Common::TrdMarket_HK;
+	else
+		_market = Trd_Common::TrdMarket_CN;
+
+	_host = params->getCString("host");
+	_port = params->getInt32("port");
+
+	return true;
+}
+
+void TraderFUTU::release()
+{
+	if (_api)
+	{
+		_api->UnregisterTrdSpi();
+		_api->UnregisterConnSpi();
+		FTAPI::ReleaseTrdApi(_api);
+		_api = nullptr;
+	}
+
+	if (_orders)
+		_orders->clear();
+
+	if (_positions)
+		_positions->clear();
+
+	if (_trades)
+		_trades->clear();
+}
+
+void TraderFUTU::registerSpi(ITraderSpi *listener)
+{
+	_sink = listener;
+	if (_sink)
+	{
+		_bd_mgr = listener->getBaseDataMgr();
+	}
+}
+
+void TraderFUTU::connect()
+{
+	if (!_api)
+	{
+		_api = FTAPI::CreateTrdApi();
+		_api->RegisterTrdSpi(this);
+		_api->RegisterConnSpi(this);
+
+		_api->InitConnect("127.0.0.1", 11111, false);
+	}
+}
+
+
+void TraderFUTU::OnInitConnect(FTAPI_Conn* pConn, Futu::i64_t nErrCode, const char* strDesc)
+{
+	if (_sink)
+		_sink->handleEvent(WTE_Connect, 0);  // 这里面会调用login
+}
+
+void TraderFUTU::disconnect()
+{
+	release();
+}
+
+bool TraderFUTU::isConnected()
+{
+	return (_state == TS_ALLREADY);
+}
+
+std::string TraderFUTU::genEntrustID(uint32_t orderRef)
+{
+	static char buffer[64] = { 0 };
+	//这里不再使用sessionid，因为每次登陆会不同，如果使用的话，可能会造成不唯一的情况
+	fmtutil::format_to(buffer, "{}#{}#{}", _user, _tradingday, orderRef);
+
+	return buffer;
+}
+
+bool TraderFUTU::makeEntrustID(char* buffer, int length)
+{
+	if (buffer == NULL || length == 0)
+		return false;
+
+	try
+	{
+		uint32_t orderref = _ordref.fetch_add(1) + 1;
+		fmtutil::format_to(buffer, "{}#{}#{}", _user, _tradingday, orderref);
+		return true;
+	}
+	catch (...)
+	{
+
+	}
+
+	return false;
+}
+
+int TraderFUTU::login(const char* user, const char* pass, const char* productInfo)
+{
+	_user = stoi(user);
+
+	if (_api == NULL)
+	{
+		return -1;
+	}
+
+	_state = TS_LOGINING;
+
+	Trd_SubAccPush::Request req;
+	Trd_SubAccPush::C2S *c2s = req.mutable_c2s();
+	c2s->add_accidlist(_user);
+
+	_SubAccPushSerialNo = _api->SubAccPush(req);
+	write_log(_sink,LL_INFO, "[TraderFUTU] Request SubAccPush SerialNo: {}", _SubAccPushSerialNo);
+
+	return 0;
+}
+
+
+void TraderFUTU::OnReply_SubAccPush(Futu::u32_t nSerialNo, const Trd_SubAccPush::Response &stRsp)
+{
+	if(nSerialNo == _SubAccPushSerialNo)
+	{
+		if (stRsp.rettype() != Common::RetType::RetType_Succeed)
+		{
+			std::string msg = stRsp.retmsg();
+			write_log(_sink,LL_ERROR, "[TraderFUTU] Login failed: {}", msg);
+			_state = TS_LOGINFAILED;
+
+			if (_thrd_worker == NULL)
+			{
+				_thrd_worker.reset(new StdThread([this, msg]{
+					_sink->onLoginResult(false, msg.c_str(), 0);
+				}));
+			}
+		}
+		else
+		{
+			time_t t = time(NULL);
+			auto dt = localtime(&t);
+
+			_tradingday = (1900 + dt->tm_year) * 10000 + (1 + dt->tm_mon) * 100 + dt->tm_mday;  // FUTU的交易日期只能取当前日期
+
+			std::stringstream ss;
+			ss << "./futudata/local/";
+			std::string path = StrUtil::standardisePath(ss.str());
+			if (!StdFile::exists(path.c_str()))
+				boost::filesystem::create_directories(path.c_str());
+			ss << _user << ".dat";
+
+			_ini.load(ss.str().c_str());
+			uint32_t lastDate = _ini.readUInt("marker", "date", 0);
+			if (lastDate != _tradingday)
+			{
+				//交易日不同,清理掉原来的数据
+				_ini.removeSection(ORDER_SECTION);
+				_ini.writeUInt("marker", "date", _tradingday);
+				_ini.save();
+
+				write_log(_sink,LL_INFO, "[TraderFUTU] [{}] Trading date changed [{} -> {}], local cache cleared...", _user, lastDate, _tradingday);
+			}		
+
+			write_log(_sink,LL_INFO, "[TraderFUTU] [{}] Login succeed, trading date: {}...", _user, _tradingday);
+
+			_state = TS_LOGINED;
+
+			if (_thrd_worker == NULL)
+			{
+				_thrd_worker.reset(new StdThread([this]{
+					_sink->onLoginResult(true, 0, _tradingday);
+					_state = TS_ALLREADY;
+				}));
+			}
+		}
+	}
+}
+
+int TraderFUTU::logout()
+{
+	return 0;
+}
+
+int TraderFUTU::orderInsert(WTSEntrust* entrust)
+{
+	if (_api == NULL || _state != TS_ALLREADY)
+	{
+		return -1;
+	}
+
+	Trd_PlaceOrder::Request req;
+	Trd_PlaceOrder::C2S *c2s = req.mutable_c2s();
+	Trd_Common::TrdHeader *header = c2s->mutable_header();
+	header->set_accid(_user);
+	header->set_trdenv(_env);
+
+	if (strcasecmp(entrust->getExchg(), "SSE") == 0) {
+		header->set_trdmarket(Trd_Common::TrdMarket_CN);
+		c2s->set_secmarket(Trd_Common::TrdSecMarket_CN_SH);
+	}
+	else if (strcasecmp(entrust->getExchg(), "SZSE") == 0) {
+		header->set_trdmarket(Trd_Common::TrdMarket_CN);
+		c2s->set_secmarket(Trd_Common::TrdSecMarket_CN_SZ);
+	}
+	else if (strcasecmp(entrust->getExchg(), "HKSE") == 0) {
+		header->set_trdmarket(Trd_Common::TrdMarket_HK);
+		c2s->set_secmarket(Trd_Common::TrdSecMarket_HK);
+	}
+	
+	if (entrust->getOffsetType() == WOT_OPEN)
+		c2s->set_trdside(Trd_Common::TrdSide_Buy);
+	else
+		c2s->set_trdside(Trd_Common::TrdSide_Sell);
+	
+	c2s->set_ordertype(Trd_Common::OrderType_Normal);
+	c2s->set_code(entrust->getCode());
+	c2s->set_qty(entrust->getVolume());
+	c2s->set_price(entrust->getPrice());
+
+	_PlaceOrderSet.insert(_api->PlaceOrder(req));
+
+	return 0;
+}
+
+void TraderFUTU::OnReply_PlaceOrder(Futu::u32_t nSerialNo, const Trd_PlaceOrder::Response &stRsp)
+{
+	if (_PlaceOrderSet.find(nSerialNo) == _PlaceOrderSet.end())  // 不是自己发的单
+		return;
+	
+	if (stRsp.rettype() != Common::RetType::RetType_Succeed)
+		write_log(_sink,LL_ERROR, "[TraderFUTU] Order inserting failed: {}", stRsp.retmsg());
+}
+
 void TraderFUTU::OnPush_UpdateOrder(const Trd_UpdateOrder::Response &stRsp)
 {
-	if (stRsp.rettype() != 0)
+	if (stRsp.rettype() != Common::RetType::RetType_Succeed)
 	{
 		WTSEntrust* entrust = makeEntrust(stRsp.s2c().order());
-
-		// WTSError* error = WTSError::create(WEC_ORDERCANCEL, error_info->error_msg);
-		// _sink->onTraderError(error);
-		// error->release();
 
 		WTSError* error = WTSError::create(WEC_ORDERINSERT, stRsp.retmsg().c_str());
 		_sink->onRspEntrust(entrust, error);
@@ -335,7 +556,6 @@ void TraderFUTU::OnPush_UpdateOrder(const Trd_UpdateOrder::Response &stRsp)
 	}
 }
 
-
 void TraderFUTU::OnPush_UpdateOrderFill(const Trd_UpdateOrderFill::Response &stRsp)
 {
 	WTSTradeInfo *trdInfo = makeTradeInfo(stRsp.s2c().orderfill());
@@ -348,60 +568,140 @@ void TraderFUTU::OnPush_UpdateOrderFill(const Trd_UpdateOrderFill::Response &stR
 	}
 }
 
-
-void TraderFUTU::OnReply_GetHistoryOrderList(Futu::u32_t nSerialNo, const Trd_GetHistoryOrderList::Response &stRsp)
+int TraderFUTU::orderAction(WTSEntrustAction* action)  // cancel order
 {
-	if (stRsp.rettype() == 0)
+	if (_api == NULL || _state != TS_ALLREADY)
 	{
-		if (NULL == _orders)
-			_orders = WTSArray::create();
+		return -1;
+	}
 
-		int count = stRsp.s2c().orderlist_size();
-		for (int i = 0; i < count; i++) {
-			const auto& order = stRsp.s2c().orderlist(i);
-			WTSOrderInfo* orderInfo = makeOrderInfo(order);
-			if (orderInfo)
-			{
-				_orders->append(orderInfo, false);
-			}
-		}
+	// construct request message
+	Trd_ModifyOrder::Request req;
+	Trd_ModifyOrder::C2S *c2s = req.mutable_c2s();
+	Trd_Common::TrdHeader *header = c2s->mutable_header();
+	header->set_accid(_user);
+	header->set_trdenv(_env);
 
-		if (_sink)
-			_sink->onRspOrders(_orders);
+	if (strcasecmp(action->getExchg(), "SSE") == 0) {
+		header->set_trdmarket(Trd_Common::TrdMarket_CN);
+	}
+	else if (strcasecmp(action->getExchg(), "SZSE") == 0) {
+		header->set_trdmarket(Trd_Common::TrdMarket_CN);
+	}
+	else if (strcasecmp(action->getExchg(), "HKSE") == 0) {
+		header->set_trdmarket(Trd_Common::TrdMarket_HK);
+	}
+	
+	c2s->set_orderid(strtoull(action->getOrderID(), NULL, 10));
+	c2s->set_modifyorderop(Trd_Common::ModifyOrderOp_Cancel);
 
-		if (_orders)
-			_orders->clear();
+	_ModifyOrderSet.insert(_api->ModifyOrder(req));
+
+	return 0;
+}
+
+void TraderFUTU::OnReply_ModifyOrder(Futu::u32_t nSerialNo, const Trd_ModifyOrder::Response &stRsp){
+	if (_ModifyOrderSet.find(nSerialNo) == _ModifyOrderSet.end())  // 不是自己发的单
+		return;
+
+	if (stRsp.rettype() != Common::RetType_Succeed)
+	{
+		write_log(_sink,LL_ERROR, "[TraderFUTU] Order cancelling failed: {}", stRsp.retmsg());
+		WTSError* error = WTSError::create(WEC_ORDERCANCEL, stRsp.retmsg().c_str());
+		_sink->onTraderError(error);
+		error->release();
 	}
 }
 
-void TraderFUTU::OnReply_GetHistoryOrderFillList(Futu::u32_t nSerialNo, const Trd_GetHistoryOrderFillList::Response &stRsp)
+uint32_t TraderFUTU::genRequestID()
 {
-	if (stRsp.rettype() == 0)
+	return _reqid.fetch_add(1) + 1;
+}
+
+int TraderFUTU::queryAccount()
+{
+	Trd_GetFunds::Request req;
+	Trd_GetFunds::C2S *c2s = req.mutable_c2s();
+	Trd_Common::TrdHeader *header = c2s->mutable_header();
+	header->set_accid(_user);
+	header->set_trdenv(_env);
+	header->set_trdmarket(_market);
+
+	_GetFundsSet.insert(_api->GetFunds(req));
+
+	return 0;
+}
+
+
+void TraderFUTU::OnReply_GetFunds(Futu::u32_t nSerialNo, const Trd_GetFunds::Response &stRsp)
+{
+	if (_GetFundsSet.find(nSerialNo) == _GetFundsSet.end())
+		return;
+	
+	if (stRsp.rettype() != Common::RetType::RetType_Succeed)
 	{
-		if (NULL == _trades)
-			_trades = WTSArray::create();
-
-		int count = stRsp.s2c().orderfilllist_size();
-		for (int i = 0; i < count; i++) {
-			const auto& orderfill = stRsp.s2c().orderfilllist(i);
-			WTSTradeInfo* trdInfo = makeTradeInfo(orderfill);
-			if (trdInfo)
-			{
-				_trades->append(trdInfo, false);
-			}
-		}
-
-		if (_sink)
-			_sink->onRspTrades(_trades);
-
-		if (_trades)
-			_trades->clear();
+		write_log(_sink,LL_ERROR, "[TraderFUTU] Account querying failed: {}", stRsp.retmsg());
 	}
+	else
+	{
+		const Trd_Common::Funds& asset = stRsp.s2c().funds();
+
+		WTSAccountInfo* accountInfo = WTSAccountInfo::create();
+		// accountInfo->setPreBalance(asset->orig_banlance);  // 昨日余额, 取不到
+		accountInfo->setCloseProfit(0);
+		accountInfo->setDynProfit(0);
+		accountInfo->setMargin(0);
+		accountInfo->setAvailable(asset.cash());
+		// accountInfo->setCommission(asset->fund_sell_fee);  // 交易费用
+		accountInfo->setFrozenMargin(asset.margincallmargin());  // 系统预扣的资金
+		accountInfo->setFrozenCommission(0);
+		// if (asset->deposit_withdraw > 0)  // 当天出入金
+		// 	accountInfo->setDeposit(asset->deposit_withdraw);
+		// else if (asset->deposit_withdraw < 0)
+		// 	accountInfo->setWithdraw(0);
+		accountInfo->setBalance(asset.totalassets());
+
+		if (_market == Trd_Common::TrdMarket_HK)
+			accountInfo->setCurrency("HKD");
+		else
+			accountInfo->setCurrency("CNY");
+
+		WTSArray * ay = WTSArray::create();
+		ay->append(accountInfo, false);
+		if (_sink)
+			_sink->onRspAccount(ay);
+
+		ay->release();
+	}
+}
+
+
+int TraderFUTU::queryPositions()
+{
+	// construct request message
+	Trd_GetPositionList::Request req;
+	Trd_GetPositionList::C2S *c2s = req.mutable_c2s();
+	Trd_Common::TrdHeader *header = c2s->mutable_header();
+
+	header->set_accid(_user);
+	header->set_trdenv(_env);
+	header->set_trdmarket(_market);
+	
+	_GetPositionListSet.insert(_api->GetPositionList(req));
+
+	return 0;
 }
 
 void TraderFUTU::OnReply_GetPositionList(Futu::u32_t nSerialNo, const Trd_GetPositionList::Response &stRsp)
 {
-	if (stRsp.rettype() == 0)
+	if (_GetPositionListSet.find(nSerialNo) == _GetPositionListSet.end())
+		return;
+	
+	if (stRsp.rettype() != Common::RetType::RetType_Succeed)
+	{
+		write_log(_sink,LL_ERROR, "[TraderFUTU] Position querying failed: {}", stRsp.retmsg());
+	}
+	else
 	{
 		if (NULL == _positions)
 			_positions = PositionMap::create();
@@ -414,15 +714,14 @@ void TraderFUTU::OnReply_GetPositionList(Futu::u32_t nSerialNo, const Trd_GetPos
 			string exchg("HKSE");
 			switch (position.secmarket())
 			{
-				case Qot_Common::QotMarket::QotMarket_CNSH_Security:
+				case Trd_Common::TrdSecMarket_CN_SH:
 					exchg = "SSE";
 					break;
-				case Qot_Common::QotMarket::QotMarket_CNSZ_Security:
+				case Trd_Common::TrdSecMarket_CN_SZ:
 					exchg = "SZSE";
 					break;
-				case Qot_Common::QotMarket::QotMarket_HK_Security:
+				case Trd_Common::TrdSecMarket_HK:
 					exchg = "HKSE";
-					break;
 				default:
 					break;
 			}
@@ -439,19 +738,19 @@ void TraderFUTU::OnReply_GetPositionList(Futu::u32_t nSerialNo, const Trd_GetPos
 					pos->setContractInfo(contract);
 					_positions->add(key, pos, false);
 				}
-				pos->setDirection(wrapPosDirection(position.positionside()));
+				pos->setDirection(position.positionside() == Trd_Common::PositionSide_Long ? WDT_LONG : WDT_SHORT);
 
-				pos->setNewPosition((double)(position->total_qty - position->yesterday_position));
-				pos->setPrePosition((double)position->yesterday_position);
+				pos->setNewPosition((position.td_buyqty() - position.td_sellqty()));
+				pos->setPrePosition(position.qty() - pos->getNewPosition());
 
-				pos->setMargin(position->total_qty*position->avg_price);
+				pos->setMargin(position.qty() * position.costprice());
 				pos->setDynProfit(0);
-				pos->setPositionCost(position->total_qty*position->avg_price);
+				pos->setPositionCost(position.qty() * position.costprice());
 
-				pos->setAvgPrice(position->avg_price);
+				pos->setAvgPrice(position.costprice());
 
 				pos->setAvailNewPos(0);
-				pos->setAvailPrePos((double)position->sellable_qty);
+				pos->setAvailPrePos(position.cansellqty());
 			}
 		}
 
@@ -478,338 +777,100 @@ void TraderFUTU::OnReply_GetPositionList(Futu::u32_t nSerialNo, const Trd_GetPos
 	}
 }
 
-
-void TraderFUTU::OnReply_GetFunds(Futu::u32_t nSerialNo, const Trd_GetFunds::Response &stRsp)
+int TraderFUTU::queryOrders()
 {
-	if (stRsp.rettype() == 0)
-	{
-		WTSAccountInfo* accountInfo = WTSAccountInfo::create();
-		accountInfo->setPreBalance(asset->orig_banlance);
-		accountInfo->setCloseProfit(0);
-		accountInfo->setDynProfit(0);
-		accountInfo->setMargin(0);
-		accountInfo->setAvailable(asset->buying_power);
-		accountInfo->setCommission(asset->fund_sell_fee);
-		accountInfo->setFrozenMargin(asset->withholding_amount);
-		accountInfo->setFrozenCommission(0);
-		if (asset->deposit_withdraw > 0)
-			accountInfo->setDeposit(asset->deposit_withdraw);
-		else if (asset->deposit_withdraw < 0)
-			accountInfo->setWithdraw(0);
-		accountInfo->setBalance(asset->total_asset);
-		accountInfo->setCurrency("CNY");
+	Trd_GetOrderList::Request req;
+	Trd_GetOrderList::C2S *c2s = req.mutable_c2s();
+	Trd_Common::TrdHeader *header = c2s->mutable_header();
+	header->set_accid(_user);
+	header->set_trdenv(_env);
+	header->set_trdmarket(_market);
 
-		WTSArray * ay = WTSArray::create();
-		ay->append(accountInfo, false);
-		if (_sink)
-			_sink->onRspAccount(ay);
+	auto filterStatusList = c2s->mutable_filterstatuslist();
+	filterStatusList->Add(Trd_Common::OrderStatus::OrderStatus_Filled_All);
 
-		ay->release();
-	}
+	_GetOrderListSet.insert(_api->GetOrderList(req));
+
+	return 0;
 }
 
-bool TraderFUTU::init(WTSVariant *params)
+void TraderFUTU::OnReply_GetOrderList(Futu::u32_t nSerialNo, const Trd_GetOrderList::Response &stRsp)
 {
-	_user = params->getCString("user");
-	_host = params->getCString("host");
-	_port = params->getInt32("port");
-
-	return true;
-}
-
-void TraderFUTU::release()
-{
-	if (_api)
-	{
-		_api->RegisterSpi(NULL);
-		_api->Release();
-		_api = NULL;
-	}
-
-	if (_orders)
-		_orders->clear();
-
-	if (_positions)
-		_positions->clear();
-
-	if (_trades)
-		_trades->clear();
-}
-
-void TraderFUTU::registerSpi(ITraderSpi *listener)
-{
-	_sink = listener;
-	if (_sink)
-	{
-		_bd_mgr = listener->getBaseDataMgr();
-	}
-}
-
-void TraderFUTU::reconnect()
-{
-	if (_api)
-	{
-		_api->RegisterSpi(NULL);
-		_api->Release();
-		_api = NULL;
-	}
-
-	std::stringstream ss;
-	ss << _flowdir << "flows/" << _user << "/";
-	boost::filesystem::create_directories(ss.str().c_str());
-	_api = m_funcCreator(_client, ss.str().c_str(), XTP_LOG_LEVEL_DEBUG);			// 创建UserApi
-	if (_api == NULL)
-	{
-		if (_sink)
-			_sink->handleEvent(WTE_Connect, -1);
-		write_log(_sink,LL_ERROR, "[TraderrXTP] Module initializing failed");
-
-		StdThreadPtr thrd(new StdThread([this](){
-			std::this_thread::sleep_for(std::chrono::seconds(2));
-			write_log(_sink,LL_WARN, "[TraderrXTP] {} reconnecting...", _user.c_str());
-			reconnect();
-		}));
+	if (_GetOrderListSet.find(nSerialNo) == _GetOrderListSet.end())
 		return;
-	}
-
-	_api->SubscribePublicTopic(_quick ? XTP_TERT_QUICK : XTP_TERT_RESUME);
-	_api->SetSoftwareVersion("1.0.0"); //设定此软件的开发版本号,用户自定义
-	_api->SetSoftwareKey(_acckey.c_str());//设定用户的开发代码,在XTP申请开户时,由xtp人员提供
-	_api->SetHeartBeatInterval(15);//设定交易服务器超时时间,单位为秒,此为1.1.16新增接口
-	_api->RegisterSpi(this);						// 注册事件
-
-	if (_sink)
-		_sink->handleEvent(WTE_Connect, 0);
-}
-
-void TraderFUTU::connect()
-{
-	reconnect();
-
-	if (_thrd_worker == NULL)
+	
+	if (stRsp.rettype() != Common::RetType::RetType_Succeed)
 	{
-		boost::asio::io_service::work work(_asyncio);
-		_thrd_worker.reset(new StdThread([this](){
-			while (true)
-			{
-				std::this_thread::sleep_for(std::chrono::seconds(2));
-				_asyncio.run_one();
-				//m_asyncIO.run();
-			}
-		}));
-	}
-}
-
-void TraderFUTU::disconnect()
-{
-	release();
-}
-
-bool TraderFUTU::isConnected()
-{
-	return (_state == TS_ALLREADY);
-}
-
-std::string TraderFUTU::genEntrustID(uint32_t orderRef)
-{
-	static char buffer[64] = { 0 };
-	fmtutil::format_to(buffer, "{}#{}#{}#{}", _user, _tradingday, _uniq_id, orderRef);
-	return buffer;
-}
-
-bool TraderFUTU::makeEntrustID(char* buffer, int length)
-{
-	if (buffer == NULL || length == 0)
-		return false;
-
-	try
-	{
-		uint32_t orderref = _ordref.fetch_add(1) + 1;
-		fmtutil::format_to(buffer, "{}#{}#{}#{}", _user, _tradingday, _uniq_id, orderref);
-		return true;
-	}
-	catch (...)
-	{
-
-	}
-
-	return false;
-}
-
-int TraderFUTU::login(const char* user, const char* pass, const char* productInfo)
-{
-	_user = user;
-	_pass = pass;
-
-	if (_api == NULL)
-	{
-		return -1;
-	}
-
-	_state = TS_LOGINING;
-
-	uint64_t iResult = _api->Login(_host.c_str(), _port, user, pass, XTP_PROTOCOL_TCP);
-	if (iResult == 0)
-	{
-		auto error_info = _api->GetApiLastError();
-		write_log(_sink,LL_ERROR, "[TraderFUTU] Login failed: {}", error_info->error_msg);
-		std::string msg = error_info->error_msg;
-		_state = TS_LOGINFAILED;
-		_asyncio.post([this, msg]{
-			_sink->onLoginResult(false, msg.c_str(), 0);
-		});
+		write_log(_sink,LL_ERROR, "[TraderFUTU] Orders querying failed: {}", stRsp.retmsg());
 	}
 	else
 	{
-		_sessionid = iResult;
-		_tradingday = strtoul(_api->GetTradingDay(), NULL, 10);
+		if (NULL == _orders)
+			_orders = WTSArray::create();
 
-		std::stringstream ss;
-		ss << "./xtpdata/local/";
-		std::string path = StrUtil::standardisePath(ss.str());
-		if (!StdFile::exists(path.c_str()))
-			boost::filesystem::create_directories(path.c_str());
-		ss << _user << ".dat";
+		int count = stRsp.s2c().orderlist_size();
+		for (int i = 0; i < count; i++) {
+			const auto& order = stRsp.s2c().orderlist(i);
+			WTSOrderInfo* orderInfo = makeOrderInfo(order);
+			if (orderInfo)
+			{
+				_orders->append(orderInfo, false);
+			}
+		}
 
-		_ini.load(ss.str().c_str());
-		uint32_t lastDate = _ini.readUInt("marker", "date", 0);
-		if (lastDate != _tradingday)
-		{
-			//交易日不同,清理掉原来的数据
-			_ini.removeSection(ORDER_SECTION);
-			_ini.writeUInt("marker", "date", _tradingday);
-			_ini.save();
+		if (_sink)
+			_sink->onRspOrders(_orders);
 
-			write_log(_sink,LL_INFO, "[TraderFUTU] [{}] Trading date changed [{} -> {}], local cache cleared...", _user.c_str(), lastDate, _tradingday);
-		}		
-
-		write_log(_sink,LL_INFO, "[TraderFUTU] [{}] Login succeed, trading date: {}...", _user.c_str(), _tradingday);
-
-		_state = TS_LOGINED;
-		_asyncio.post([this]{
-			_sink->onLoginResult(true, 0, _tradingday);
-			_state = TS_ALLREADY;
-		});
+		if (_orders)
+			_orders->clear();
 	}
-	return 0;
 }
 
-int TraderFUTU::logout()
-{
-	if (_api == NULL)
-		return -1;
-
-	_api->Logout(_sessionid);
-	return 0;
-}
-
-int TraderFUTU::orderInsert(WTSEntrust* entrust)
-{
-	if (_api == NULL || _state != TS_ALLREADY)
-	{
-		return -1;
-	}
-
-	XTPOrderInsertInfo req;
-	memset(&req, 0, sizeof(req));
-	
-	req.order_client_id = _ordref;
-	strcpy(req.ticker, entrust->getCode());
-	req.market = wt_stricmp(entrust->getExchg(), "SSE") == 0 ? XTP_MKT_SH_A : XTP_MKT_SZ_A;
-	req.price = entrust->getPrice();
-	req.quantity = (int64_t)entrust->getVolume();
-	req.price_type = XTP_PRICE_LIMIT;
-	req.side = wrapDirectionType(entrust->getDirection(), entrust->getOffsetType());
-	req.business_type = XTP_BUSINESS_TYPE_CASH;
-	req.position_effect = wrapOffsetType(entrust->getOffsetType());
-
-	if (strlen(entrust->getUserTag()) > 0)
-	{
-		//m_mapEntrustTag[entrust->getEntrustID()] = entrust->getUserTag();
-		_ini.writeString(ENTRUST_SECTION, entrust->getEntrustID(), entrust->getUserTag());
-		_ini.save();
-	}
-
-	uint64_t iResult = _api->InsertOrder(&req, _sessionid);
-	if (iResult == 0)
-	{
-		auto error_info = _api->GetApiLastError();
-		write_log(_sink,LL_ERROR, "[TraderFUTU] Order inserting failed: {}", error_info->error_msg);
-	}
-
-	return 0;
-}
-
-int TraderFUTU::orderAction(WTSEntrustAction* action)
-{
-	if (_api == NULL || _state != TS_ALLREADY)
-	{
-		return -1;
-	}
-
-	uint64_t iResult = _api->CancelOrder(strtoull(action->getOrderID(), NULL, 10), _sessionid);
-	if (iResult == 0)
-	{
-		auto error_info = _api->GetApiLastError();
-		write_log(_sink,LL_ERROR, "[TraderFUTU] Order cancelling failed: {}", error_info->error_msg);
-	}
-
-	return 0;
-}
-
-uint32_t TraderFUTU::genRequestID()
-{
-	return _reqid.fetch_add(1) + 1;
-}
-
-int TraderFUTU::queryAccount()
-{
-	int iResult = _api->QueryAsset(_sessionid, genRequestID());
-	if (iResult != 0)
-	{
-		auto error_info = _api->GetApiLastError();
-		write_log(_sink,LL_ERROR, "[TraderFUTU] Account querying failed: {}", error_info->error_msg);
-	}
-
-	return 0;
-}
-
-int TraderFUTU::queryPositions()
-{
-	int iResult = _api->QueryPosition("", _sessionid, genRequestID());
-	if (iResult != 0)
-	{
-		auto error_info = _api->GetApiLastError();
-		write_log(_sink,LL_ERROR, "[TraderFUTU] Positions querying failed: {}", error_info->error_msg);
-	}
-
-	return 0;
-}
-
-int TraderFUTU::queryOrders()
-{
-	XTPQueryOrderReq req;
-	memset(&req, 0, sizeof(XTPQueryOrderReq));
-	int iResult = _api->QueryOrders(&req, _sessionid, genRequestID());
-	if (iResult != 0)
-	{
-		auto error_info = _api->GetApiLastError();
-		write_log(_sink,LL_ERROR, "[TraderFUTU] Orders querying failed: {}", error_info->error_msg);
-	}
-
-	return 0;
-}
 
 int TraderFUTU::queryTrades()
 {
-	XTPQueryTraderReq req;
-	memset(&req, 0, sizeof(XTPQueryTraderReq));
-	int iResult = _api->QueryTrades(&req, _sessionid, genRequestID());
-	if (iResult != 0)
-	{
-		auto error_info = _api->GetApiLastError();
-		write_log(_sink,LL_ERROR, "[TraderFUTU] Trades querying failed: {}", error_info->error_msg);
-	}
+	Trd_GetOrderFillList::Request req;
+	Trd_GetOrderFillList::C2S *c2s = req.mutable_c2s();
+	Trd_Common::TrdHeader *header = c2s->mutable_header();
+	header->set_accid(_user);
+	header->set_trdenv(_env);
+	header->set_trdmarket(_market);
 
+	_GetOrderFillListSet.insert(_api->GetOrderFillList(req));
+	
 	return 0;
 }
+
+
+void TraderFUTU::OnReply_GetOrderFillList(Futu::u32_t nSerialNo, const Trd_GetOrderFillList::Response &stRsp)
+{
+	if (_GetOrderFillListSet.find(nSerialNo) == _GetOrderFillListSet.end())
+		return;
+	
+	if (stRsp.rettype() != Common::RetType::RetType_Succeed)
+	{
+		write_log(_sink,LL_ERROR, "[TraderFUTU] Trades querying failed: {}", stRsp.retmsg());
+	}
+	else
+	{
+		if (NULL == _trades)
+			_trades = WTSArray::create();
+
+		int count = stRsp.s2c().orderfilllist_size();
+		for (int i = 0; i < count; i++) {
+			const auto& orderfill = stRsp.s2c().orderfilllist(i);
+			WTSTradeInfo* trdInfo = makeTradeInfo(orderfill);
+			if (trdInfo)
+			{
+				_trades->append(trdInfo, false);
+			}
+		}
+
+		if (_sink)
+			_sink->onRspTrades(_trades);
+
+		if (_trades)
+			_trades->clear();
+	}
+}
+
