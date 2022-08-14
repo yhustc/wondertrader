@@ -301,7 +301,7 @@ public:
 			printf("OrderID: ");
 			std::cin >> orderid;
 
-			printf("OrderID: %s,confirm(y/n)? ", orderid);
+			printf("OrderID: %s, confirm(y/n)? ", orderid);
 			char c;
 			std::cin >> c;
 			if (c == 'y')
@@ -320,7 +320,7 @@ public:
 
 
 		WTSLogger::info("[{}]Canceling [{}]...", m_pParams->getCString("user"), orderid);
-		WTSEntrustAction* action = WTSEntrustAction::create(ordInfo->getCode());
+		WTSEntrustAction* action = WTSEntrustAction::create(ordInfo->getCode(), ordInfo->getExchg());
 		action->setEntrustID(ordInfo->getEntrustID());
 		action->setOrderID(orderid);
 		action->setActionFlag(WAF_CANCEL);
@@ -431,6 +431,9 @@ public:
 
 		WTSLogger::info("[{}] Orders updated, {} orders totally", m_pParams->getCString("user"), cnt);
 
+		if (m_mapOrds == NULL)
+			m_mapOrds = WTSObjectMap::create();
+
 		for (uint32_t i = 0; i < cnt; i++)
 		{
 			WTSOrderInfo* ordInfo = (WTSOrderInfo*)((WTSArray*)ayOrders)->at(i);
@@ -441,6 +444,11 @@ public:
 							ordInfo->getCode(), ordInfo->getOrderID(), ordInfo->getOrderTime(),
 							direction, ordInfo->getPrice(),
 							ordInfo->getVolTraded(), ordInfo->getVolLeft(), ordInfo->isAlive());
+
+			if (m_mapOrds->find(ordInfo->getOrderID()) == m_mapOrds->end())
+			{
+				m_mapOrds->add(ordInfo->getOrderID(), ordInfo, true);
+			}
 		}
 
 		StdUniqueLock lock(g_mtxOpt);

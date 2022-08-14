@@ -785,9 +785,7 @@ int TraderFUTU::queryOrders()
 	header->set_accid(_user);
 	header->set_trdenv(_env);
 	header->set_trdmarket(_market);
-
-	auto filterStatusList = c2s->mutable_filterstatuslist();
-	filterStatusList->Add(Trd_Common::OrderStatus::OrderStatus_Filled_All);
+	c2s->set_refreshcache(true);
 
 	_GetOrderListSet.insert(_api->GetOrderList(req));
 
