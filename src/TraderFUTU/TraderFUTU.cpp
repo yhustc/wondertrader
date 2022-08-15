@@ -785,7 +785,6 @@ int TraderFUTU::queryOrders()
 	header->set_accid(_user);
 	header->set_trdenv(_env);
 	header->set_trdmarket(_market);
-	c2s->set_refreshcache(true);
 
 	_GetOrderListSet.insert(_api->GetOrderList(req));
 
